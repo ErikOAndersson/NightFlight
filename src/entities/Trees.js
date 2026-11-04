@@ -45,9 +45,10 @@ void main() {
     vec2 wxz = (id + 0.5) * uCell + jitter;
 
     float ground = terrainHeight(wxz);
-    // Keep trees in the lowlands, off the high hilltops.
+    // Keep trees in the lowlands, off the high hilltops, and out of lakes.
     float lowland = step(ground, uAmp * 0.55);
-    float scale = (0.8 + treeHash(id + 9.2) * 0.8) * present * lowland;
+    float dry = step(lakeMask(wxz), 0.05);
+    float scale = (0.8 + treeHash(id + 9.2) * 0.8) * present * lowland * dry;
 
     vec3 local = aPos * scale;
     vec3 world = vec3(wxz.x + local.x, ground + local.y, wxz.y + local.z);

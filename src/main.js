@@ -26,6 +26,9 @@ window.addEventListener("keydown", (e) => {
         case "g":
             scene.toggleEdges();
             break;
+        case "c":
+            scene.toggleAutoCamera();
+            break;
         case "m": {
             const hud = document.getElementById("hud");
             hud.style.display = hud.style.display === "none" ? "block" : "none";
