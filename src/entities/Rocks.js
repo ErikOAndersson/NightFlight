@@ -52,7 +52,8 @@ void main() {
     float ground = terrainHeight(wxz);
 
     float sizeRand = uSizeMin + rockHash(id + 9.2) * (uSizeMax - uSizeMin);
-    float scale = sizeRand * present * typeMatch;
+    float dry = step(lakeMask(wxz), 0.05);     // keep rocks out of lakes
+    float scale = sizeRand * present * typeMatch * dry;
 
     vec3 local = aPos * scale;
     vec3 world = vec3(wxz.x + local.x, ground + local.y, wxz.y + local.z);

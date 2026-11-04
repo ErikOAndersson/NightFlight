@@ -1,6 +1,9 @@
 // GLSL snippets and uniform helpers shared by the GPU programs, so the
 // camera projection and distance fog are defined in exactly one place.
-import { FOG } from "../config.js";
+import { FOG, WATER } from "../config.js";
+
+// Formats a JS number as a GLSL float literal (always with a decimal point).
+const glsl = (n) => (Number.isInteger(n) ? n.toFixed(1) : String(n));
 
 // Vertex-shader uniforms describing the camera + pinhole projection.
 export const CAMERA_UNIFORMS = `
@@ -71,14 +74,24 @@ float terrainNoise(vec2 p) {
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// Mostly flat ground with occasional low rolling hills.
+// Large-scale mask marking the single-body lake regions (0 outside, 1 inside),
+// with a soft sloping shore band. Rare and large by design.
+float lakeMask(vec2 w) {
+    float m = terrainNoise(w * ${glsl(WATER.scale)} + vec2(123.0, 71.0));
+    return smoothstep(${glsl(WATER.threshold)}, ${glsl(WATER.threshold + WATER.edge)}, m);
+}
+
+// Mostly flat ground with occasional low rolling hills, carved into a basin
+// wherever the lake mask is high so each lake is one contiguous body of water.
 float terrainHeight(vec2 w) {
     float h = terrainNoise(w * 0.010 * uFreq);
     h += terrainNoise(w * 0.035 * uFreq) * 0.28;
     h += terrainNoise(w * 0.10 * uFreq) * 0.05;
     h /= 1.33;
     h = pow(h, 3.0);
-    return h * uAmp;
+    float y = h * uAmp;
+    y = mix(y, min(y, ${glsl(WATER.floor)}), lakeMask(w));
+    return y;
 }
 `;
 

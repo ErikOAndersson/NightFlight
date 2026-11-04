@@ -44,9 +44,6 @@ precision highp float;
 in vec2 vWorld;
 in float vDepth;
 uniform float uLevel;
-uniform float uScale;
-uniform float uThreshold;
-uniform float uEdge;
 uniform float uDepthFade;
 uniform float uTime;
 ${FOG_UNIFORMS}
@@ -58,12 +55,9 @@ out vec4 frag;
 
 void main() {
     float terr = terrainHeight(vWorld);
+    float lake = lakeMask(vWorld);
 
-    // Large-scale mask decides which low areas are lakes (occasional, big).
-    float mask = terrainNoise(vWorld * uScale + vec2(123.0, 71.0));
-    float lake = smoothstep(uThreshold, uThreshold + uEdge, mask);
-
-    // Shoreline follows the terrain: water only where the ground is below it.
+    // Shoreline follows the carved basin: water where the ground is below it.
     float shore = smoothstep(0.0, uDepthFade, uLevel - terr);
 
     float a = lake * shore;
@@ -87,7 +81,7 @@ export class Water {
 
         this.program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
         this.u = getUniforms(gl, this.program, [
-            "uCenter", "uHalf", "uLevel", "uScale", "uThreshold", "uEdge",
+            "uCenter", "uHalf", "uLevel",
             "uDepthFade", "uTime", "uSeed", "uAmp", "uFreq",
             "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
             "uScaleX", "uScaleY", "uNear", "uFar",
@@ -119,9 +113,6 @@ export class Water {
         gl.uniform2f(this.u.uCenter, centerX, centerZ);
         gl.uniform1f(this.u.uHalf, WATER.halfExtent);
         gl.uniform1f(this.u.uLevel, WATER.level);
-        gl.uniform1f(this.u.uScale, WATER.scale);
-        gl.uniform1f(this.u.uThreshold, WATER.threshold);
-        gl.uniform1f(this.u.uEdge, WATER.edge);
         gl.uniform1f(this.u.uDepthFade, WATER.depthFade);
         gl.uniform1f(this.u.uTime, time);
 

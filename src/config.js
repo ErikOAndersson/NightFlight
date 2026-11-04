@@ -12,7 +12,9 @@ export const CAMERA = {
     far: 6000,
     pivotStep: Math.PI / 36, // yaw/elevation change per arrow press (5 degrees)
     autoInterval: 10,        // seconds between automatic re-positions
-    autoSmoothing: 1.1       // easing rate toward the target angle
+    autoSmoothing: 1.1,      // easing rate toward the target angle
+    autoElevationMin: 0.05,  // lowest elevation the auto-camera picks
+    autoElevationMax: 0.6    // highest (keeps auto moves off steep top-down views)
 };
 
 export const TERRAIN = {
@@ -68,10 +70,11 @@ export const FOG = {
 };
 
 export const WATER = {
-    level: 10,         // world height of lake surfaces                         10
-    halfExtent: 1700,  // half-size of the water plane (covers the view)        1700
-    scale: 0.0001,     // lake-mask noise frequency (small = larger lakes)      0.0016
-    threshold: 0.66,   // lake-mask cutoff (higher = rarer lakes)               0.66
-    edge: 0.06,        // lake-mask fade band                                   0.06
-    depthFade: 1       // how quickly shallows fade to the shoreline            16
+    level: 10,         // world height of the lake surface
+    floor: -16,        // carved basin floor (well below the surface)
+    halfExtent: 1700,  // half-size of the water plane (covers the view)
+    scale: 0.0013,     // lake-mask noise frequency (smaller = larger, rarer lakes)
+    threshold: 0.70,   // lake-mask cutoff (higher = rarer lakes)
+    edge: 0.12,        // lake-mask shore band (larger = gentler shores)
+    depthFade: 16      // how quickly shallows fade to the shoreline
 };

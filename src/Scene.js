@@ -27,20 +27,21 @@ export class Scene {
         this.birdX = 0;
         this.birdZ = 0;
 
-        // Automatic camera re-positioning timer.
+        // Automatic camera re-positioning.
+        this.autoCamera = true;
         this.autoTimer = 0;
     }
 
     update(dt) {
         this.birdZ += this.camera.speed * dt; // the bird flies forward
 
-        // Every so often, pick a new random heading and elevation to drift to.
+        // Every so often, pick a new random heading and a moderate elevation.
         this.autoTimer += dt;
-        if (this.autoTimer >= CAMERA.autoInterval) {
+        if (this.autoCamera && this.autoTimer >= CAMERA.autoInterval) {
             this.autoTimer = 0;
             const yaw = this.camera.targetYaw + (Math.random() * 2 - 1) * Math.PI;
-            const elevation = CAMERA.elevationMin +
-                Math.random() * (CAMERA.elevationMax - CAMERA.elevationMin);
+            const elevation = CAMERA.autoElevationMin +
+                Math.random() * (CAMERA.autoElevationMax - CAMERA.autoElevationMin);
             this.camera.setTarget(yaw, elevation);
         }
 
@@ -72,6 +73,12 @@ export class Scene {
 
     pivotDown() {
         this.camera.pivotVertical(-CAMERA.pivotStep);
+        this.autoTimer = 0;
+    }
+
+    // Toggle the automatic camera re-positioning.
+    toggleAutoCamera() {
+        this.autoCamera = !this.autoCamera;
         this.autoTimer = 0;
     }
 
