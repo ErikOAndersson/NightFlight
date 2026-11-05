@@ -20,18 +20,22 @@ over procedural terrain, rendered to an HTML5 canvas with vanilla ES modules
 
 ## Architecture (what lives where)
 
-- `index.html` — canvas + HUD, loads `src/main.js` as a module.
+- `index.html` — canvas + a hidden help overlay (`#help`, a vertical command
+  list toggled by `M`), loads `src/main.js` as a module.
 - `src/main.js` — creates `Renderer` + `Scene`, runs the rAF loop, routes keys.
 - `src/Scene.js` — owns all entities, the bird's forward progress, the camera
   auto-reposition timer, and the per-frame draw order.
 - `src/config.js` — **all tunable constants** grouped as `CAMERA`, `TERRAIN`,
-  `TREES`, `ROCKS`, `BIRD`, `MOON`, `FOG`, `WATER`. Put new tunables here, not
-  inline.
+  `TREES`, `ROCKS`, `BIRD` (incl. `scale`/`flap`), `MOON`, `FOG`, `WATER`. Put
+  new tunables here, not inline.
 - `src/core/` — `Renderer` (WebGL2 context/clear), `Camera` (orbit + eased
   targets), `glUtils` (shader compile/link), `shaderChunks` (shared GLSL +
   uniform setters).
 - `src/world/` — `Noise` (seed holder only), `Sky`, `Terrain`.
-- `src/entities/` — `Moon`, `Water`, `Trees`, `Rocks`, `Bird`.
+- `src/entities/` — `Moon`, `Water`, `Trees`, `Rocks`, `Bird`. `Bird` imports
+  its mesh from `Bird2.js`; `Rocks` imports two meshes from `Rock1.js` and
+  `Rock2.js` (each a plain `export const` of `{ vertices, faces, edges }`
+  converted from an `.obj`). The `.obj` sources sit alongside them.
 
 Draw order each frame (in `Scene.render`): clear → sky → moon → terrain → water
 → trees → rocks → bird.
@@ -55,8 +59,14 @@ Draw order each frame (in `Scene.render`): clear → sky → moon → terrain �
   both just set the targets.
 - **Instancing with per-cell hashing.** Trees/Rocks draw one static mesh across
   a grid of candidate cells; a per-cell hash decides presence/type/size and
-  absent or non-matching vertices collapse to a point (scale 0). Rocks pack 3
-  variants into one mesh via a per-vertex `aType` that the chosen type selects.
+  absent or non-matching vertices collapse to a point (scale 0). Rocks pack the
+  two imported models into one mesh via a per-vertex `aType` that the chosen
+  type selects, and each instance also gets a per-cell random yaw.
+- **Imported models are baked at build time.** `Bird`/`Rocks` remap the raw
+  model axes into the scene (Z-up → Y-up, base dropped to `y=0`), normalize to a
+  target size, and flat-shade each face into vertex colors in JS; the GPU then
+  just instances/positions them. The bird derives per-vertex wing-flap weights
+  from each vertex's distance off the body centerline.
 - **No lighting pass for small props** — shading is baked into vertex colors;
   fog is applied in the fragment shader via `applyFog`.
 - Terrain grid is a square re-centered on the bird each frame, snapped to cell
@@ -74,12 +84,15 @@ Draw order each frame (in `Scene.render`): clear → sky → moon → terrain �
 ## Current state / possible next steps
 
 Implemented: procedural night terrain, fog, moonlit shading; orbit camera with
-manual (`←→↑↓`) + automatic pivots; HUD controls (`R` regenerate, `G`
-wireframe, `1/2` hills, `3/4` height, `5/6` trees); instanced pines and rocks;
-a textured moon; a starfield + nebula sky; occasional lakes with a
-terrain-following shoreline.
+manual (`←→↑↓`) + automatic pivots; controls (`R` regenerate, `G` wireframe,
+`C` auto-cam toggle, `1/2` hills, `3/4` height, `5/6` trees, `M` toggle the
+help overlay); instanced pines; a textured moon; a starfield + nebula sky;
+occasional lakes with a terrain-following shoreline; an imported low-poly bird
+(`Bird2.js`) that alternates between flapping and gliding on a random 10–20s
+timer; and two imported, randomly-sized and -rotated rock models
+(`Rock1.js`/`Rock2.js`).
 
-The bird (`src/entities/Bird.js`) is an intentional low-poly **placeholder** —
-swapping in a real model is the obvious next task; its placement/animation
-wiring stays the same. Other natural extensions: water moon-glint/reflection,
-clouds, birds flocking, snow on peaks, a key to toggle the auto-camera.
+Natural extensions: water moon-glint/reflection, clouds, birds flocking, snow on
+peaks. When swapping in new `.obj` models, follow the `Bird2.js`/`Rock1.js`
+pattern (plain `export const` of `{ vertices, faces, edges }`, 0-based triangle
+indices) and bake orientation/size/shading in the entity's `_build()`.
