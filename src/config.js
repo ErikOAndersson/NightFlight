@@ -53,14 +53,16 @@ export const ROCKS = {
 };
 
 export const BIRD = {
-    altitude: 95         // absolute altitude (camera sits at CAMERA height)
+    altitude: 95,        // absolute altitude (camera sits at CAMERA height)
+    scale: 6,            // multiplier applied to the imported model (model span ~15)
+    flap: 20             // wing-tip vertical travel at full flap
 };
 
 export const MOON = {
     // Sky direction (left, up, forward of the initial facing).
     // Normalized in the shader; the moon stays fixed in the sky as you fly.
     direction: [-0.45, 0.33, 0.85],
-    size: 0.13           // half-size on screen (NDC)
+    size: 0.20           // half-size on screen (NDC)   13
 };
 
 export const FOG = {
@@ -75,6 +77,6 @@ export const WATER = {
     halfExtent: 1700,  // half-size of the water plane (covers the view)
     scale: 0.0013,     // lake-mask noise frequency (smaller = larger, rarer lakes)
     threshold: 0.70,   // lake-mask cutoff (higher = rarer lakes)
-    edge: 0.12,        // lake-mask shore band (larger = gentler shores)
+    edge: 0.02,        // lake-mask shore band (larger = gentler shores)        0.12
     depthFade: 16      // how quickly shallows fade to the shoreline
 };

@@ -8,17 +8,18 @@ import {
     setFogUniforms
 } from "../core/shaderChunks.js";
 import { BIRD } from "../config.js";
+import { BIRD_MODEL } from "./Bird2.js";
 
-// Placeholder low-poly bird, uploaded once to the GPU, that flies a fixed
-// distance ahead of the camera so the camera reads as following it. Wing-tip
-// flapping is driven by a uniform in the vertex shader. Swap the geometry in
-// _buildMesh() for a real model later; the positioning stays the same.
+// Imported low-poly bird, uploaded once to the GPU, that flies a fixed distance
+// ahead of the camera so the camera reads as following it. The model is
+// reoriented into the scene axes (model X=body, Y=wingspan, Z=up) and flat-
+// shaded into vertex colors; wings flap via a per-vertex weight in the shader.
 const VERTEX_SRC = `#version 300 es
 precision highp float;
 
 in vec3 aPos;
 in vec3 aColor;
-in float aFlap;        // 1.0 for wing-tip vertices, else 0.0
+in float aFlap;        // per-vertex flap weight (0 at body, 1 at wing tips)
 uniform vec3 uBird;    // bird world position
 uniform float uFlap;   // current wing-tip vertical offset
 ${CAMERA_UNIFORMS}
@@ -52,52 +53,74 @@ void main() {
     frag = vec4(applyFog(vColor, vDepth), 1.0);
 }`;
 
-const BODY = [0.227, 0.227, 0.267];  // #3a3a44
-const WING_L = [0.173, 0.173, 0.208]; // #2c2c35
-const WING_R = [0.290, 0.290, 0.337]; // #4a4a56
+const BASE_COLOR = [0.247, 0.247, 0.290]; // night plumage
+const LIGHT_DIR = norm([-0.3, 0.9, 0.25]); // soft moonlight from above
+const AMBIENT = 0.45;
+
+function norm(v) {
+    const l = Math.hypot(v[0], v[1], v[2]) || 1;
+    return [v[0] / l, v[1] / l, v[2] / l];
+}
+
+// Random dwell time (seconds) before the next flap/glide switch.
+function randDelay() {
+    return 10 + Math.random() * 10;
+}
+
+function dot(a, b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function faceNormal(p0, p1, p2) {
+    const ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
+    const vx = p2[0] - p0[0], vy = p2[1] - p0[1], vz = p2[2] - p0[2];
+    return norm([uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx]);
+}
 
 export class Bird {
     constructor(renderer) {
         this.gl = renderer.gl;
         this.altitude = BIRD.altitude;
+        this.flapAmp = BIRD.flap;
+        // Alternates between flapping and gliding (wings still); eased so the
+        // wings settle smoothly rather than snapping at each switch.
+        this.flapping = true;
+        this.ampLevel = 1;
+        this.nextSwitch = null;
+        this.lastTime = null;
 
         this._build();
     }
 
     _build() {
         const gl = this.gl;
+        const s = BIRD.scale;
+
+        // Remap model axes into the scene: model X=body, Y=wingspan, Z=up;
+        // scene wants forward=+z, up=+y, left/right=x, so (mx,my,mz) → (my,mz,mx).
+        let maxSpan = 0;
+        for (const [, my] of BIRD_MODEL.vertices) {
+            maxSpan = Math.max(maxSpan, Math.abs(my));
+        }
+        const world = BIRD_MODEL.vertices.map(([mx, my, mz]) => [my * s, mz * s, mx * s]);
+        // Wing weight: tips (large |span|) flap most, the body centerline stays.
+        const flapOf = BIRD_MODEL.vertices.map(([, my]) => Math.pow(Math.abs(my) / maxSpan, 1.6));
+
         const pos = [];
         const col = [];
         const flap = [];
 
-        // Pushes one triangle: three points, a shared color, and per-vertex
-        // flap flags (1 where the vertex should follow the flapping uniform).
-        const tri = (pts, color, flapFlags) => {
-            for (let i = 0; i < 3; i++) {
-                pos.push(pts[i][0], pts[i][1], pts[i][2]);
+        for (const [a, b, c] of BIRD_MODEL.faces) {
+            const p0 = world[a], p1 = world[b], p2 = world[c];
+            const n = faceNormal(p0, p1, p2);
+            const shade = AMBIENT + (1 - AMBIENT) * Math.max(0, dot(n, LIGHT_DIR));
+            const color = [BASE_COLOR[0] * shade, BASE_COLOR[1] * shade, BASE_COLOR[2] * shade];
+            for (const [p, idx] of [[p0, a], [p1, b], [p2, c]]) {
+                pos.push(p[0], p[1], p[2]);
                 col.push(color[0], color[1], color[2]);
-                flap.push(flapFlags[i]);
+                flap.push(flapOf[idx]);
             }
-        };
-
-        const nose = [0, 0, 26];
-        const tail = [0, 2, -24];
-        const left = [-7, 0, 0];
-        const right = [7, 0, 0];
-        // Body: a slim diamond along the travel axis (two triangles).
-        tri([nose, right, tail], BODY, [0, 0, 0]);
-        tri([nose, tail, left], BODY, [0, 0, 0]);
-
-        const wingRootF = [0, 2, 6];
-        const wingRootB = [0, 2, -10];
-        const leftTip = [-40, 0, -6];
-        const rightTip = [40, 0, -6];
-        // Wings: tips (flag 1) rise and fall with the flap uniform.
-        tri([wingRootF, leftTip, wingRootB], WING_L, [0, 1, 0]);
-        tri([wingRootF, rightTip, wingRootB], WING_R, [0, 1, 0]);
-
-        // Tail fan.
-        tri([[0, 2, -24], [-9, 2, -34], [9, 2, -34]], WING_L, [0, 0, 0]);
+        }
 
         this.count = pos.length / 3;
 
@@ -131,9 +154,21 @@ export class Bird {
 
     render(renderer, camera, bx, bz, time) {
         const gl = renderer.gl;
-        // Gentle bobbing plus flapping driven by time.
+        if (this.nextSwitch === null) {
+            this.nextSwitch = time + randDelay();
+            this.lastTime = time;
+        }
+        if (time >= this.nextSwitch) {
+            this.flapping = !this.flapping;
+            this.nextSwitch = time + randDelay();
+        }
+        const dt = Math.min(0.1, time - this.lastTime);
+        this.lastTime = time;
+        this.ampLevel += ((this.flapping ? 1 : 0) - this.ampLevel) * Math.min(1, dt * 3);
+
+        // Gentle bobbing plus flapping scaled by the current mode amplitude.
         const by = this.altitude + Math.sin(time * 2) * 4;
-        const flap = Math.sin(time * 8) * 16;
+        const flap = Math.sin(time * 8) * this.flapAmp * this.ampLevel;
 
         gl.useProgram(this.program);
         setCameraUniforms(gl, this.u, camera, renderer);

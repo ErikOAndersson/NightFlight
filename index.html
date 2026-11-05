@@ -17,20 +17,39 @@
         width: 100vw;
         height: 100vh;
     }
-    #hud {
+    #help {
         position: fixed;
         top: 10px;
         left: 12px;
-        color: rgba(255, 255, 255, 0.8);
-        font: 13px/1.4 monospace;
+        margin: 0;
+        padding: 10px 14px;
+        list-style: none;
+        color: rgba(255, 255, 255, 0.85);
+        font: 13px/1.6 monospace;
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        background: rgba(0, 0, 0, 0.35);
+        border-radius: 6px;
         pointer-events: none;
+    }
+    #help b {
+        display: inline-block;
+        min-width: 56px;
+        color: #fff;
     }
 </style>
 </head>
 <body>
 <canvas id="scene"></canvas>
-<div id="hud" style="display: none;">Flying over randomly generated terrain &mdash; R regenerate &middot; G edges &middot; C auto-cam &middot; 1/2 hills &middot; 3/4 height &middot; 5/6 trees &middot; &larr;/&rarr;/&uarr;/&darr; pivot &middot; M toggle this text</div>
+<ul id="help" style="display: none;">
+    <li><b>M</b> toggle this help</li>
+    <li><b>R</b> regenerate world</li>
+    <li><b>G</b> wireframe edges</li>
+    <li><b>C</b> toggle auto-camera</li>
+    <li><b>1 / 2</b> fewer / more hills</li>
+    <li><b>3 / 4</b> lower / raise height</li>
+    <li><b>5 / 6</b> fewer / more trees</li>
+    <li><b>&larr; &rarr; &uarr; &darr;</b> pivot camera</li>
+</ul>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
