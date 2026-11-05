@@ -30,8 +30,8 @@ window.addEventListener("keydown", (e) => {
             scene.toggleAutoCamera();
             break;
         case "m": {
-            const hud = document.getElementById("hud");
-            hud.style.display = hud.style.display === "none" ? "block" : "none";
+            const help = document.getElementById("help");
+            help.style.display = help.style.display === "none" ? "block" : "none";
             break;
         }
         case "1":

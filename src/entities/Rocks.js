@@ -9,12 +9,14 @@ import {
     setFogUniforms
 } from "../core/shaderChunks.js";
 import { ROCKS } from "../config.js";
+import { ROCK1_MODEL } from "./Rock1.js";
+import { ROCK2_MODEL } from "./Rock2.js";
 
 // Sparse gray rocks scattered over the terrain, GPU-instanced like the trees.
-// Three low-poly rock variants are packed into one mesh, tagged per vertex
-// (aType). Each instance hashes a type and a size; vertices of the other types
-// collapse to a point, so one draw call plants a single, randomly sized rock
-// per cell on the shared ground height.
+// Two imported low-poly models are packed into one mesh, tagged per vertex
+// (aType). Each instance hashes a type, a size and a yaw; vertices of the other
+// type collapse to a point, so one draw call plants a single, randomly sized
+// and rotated rock per cell on the shared ground height.
 const VERTEX_SRC = `#version 300 es
 precision highp float;
 
@@ -44,7 +46,7 @@ void main() {
     vec2 id = floor(cell / uCell);
 
     float present = step(uThreshold, rockHash(id));
-    float chosen = floor(rockHash(id + 2.2) * 3.0);        // pick a variant
+    float chosen = floor(rockHash(id + 2.2) * 2.0);        // pick one of two models
     float typeMatch = step(abs(aType - chosen), 0.5);      // 1 if this vertex's type
 
     vec2 jitter = (vec2(rockHash(id + 3.1), rockHash(id + 6.7)) - 0.5) * uCell * 0.7;
@@ -55,7 +57,11 @@ void main() {
     float dry = step(lakeMask(wxz), 0.05);     // keep rocks out of lakes
     float scale = sizeRand * present * typeMatch * dry;
 
-    vec3 local = aPos * scale;
+    // Random yaw per cell so the repeated models never look identical.
+    float ang = rockHash(id + 15.3) * 6.2831853;
+    float ca = cos(ang), sa = sin(ang);
+    vec3 s = aPos * scale;
+    vec3 local = vec3(s.x * ca - s.z * sa, s.y, s.x * sa + s.z * ca);
     vec3 world = vec3(wxz.x + local.x, ground + local.y, wxz.y + local.z);
 
     float depth;
@@ -94,55 +100,35 @@ export class Rocks {
         const col = [];
         const type = [];
 
-        // Deterministic per-vertex radius jitter so rocks look irregular.
-        const vnoise = (t, k) => {
-            const s = Math.sin(t * 13.1 + k * 7.3) * 43758.5453;
-            return s - Math.floor(s);
-        };
+        // Bake one model into the shared arrays: models are Z-up, so remap to
+        // Y-up, drop the base to y=0, normalize to a target footprint, and
+        // flat-shade each face into vertex colors (two-sided, no lighting pass).
+        const addModel = (model, t, gray, targetRadius) => {
+            let maxR = 0;
+            let minUp = Infinity;
+            for (const [mx, my, mz] of model.vertices) {
+                maxR = Math.max(maxR, Math.hypot(mx, my));
+                minUp = Math.min(minUp, mz);
+            }
+            const s = targetRadius / maxR;
+            const world = model.vertices.map(([mx, my, mz]) => [mx * s, (mz - minUp) * s, my * s]);
 
-        const pushTri = (a, b, c, color, t) => {
-            pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
-            for (let i = 0; i < 3; i++) {
-                col.push(color[0], color[1], color[2]);
-                type.push(t);
+            for (const [a, b, c] of model.faces) {
+                const p0 = world[a], p1 = world[b], p2 = world[c];
+                const n = faceNormal(p0, p1, p2);
+                const shade = ROCK_AMBIENT + (1 - ROCK_AMBIENT) * Math.abs(dot(n, LIGHT_DIR));
+                const color = [gray[0] * shade, gray[1] * shade, gray[2] * shade];
+                for (const p of [p0, p1, p2]) {
+                    pos.push(p[0], p[1], p[2]);
+                    col.push(color[0], color[1], color[2]);
+                    type.push(t);
+                }
             }
         };
 
-        // A faceted boulder: jittered base ring, bulging mid ring, apex.
-        const addRock = (t, n, rBase, rMid, height, gray) => {
-            const base = [];
-            const mid = [];
-            for (let k = 0; k < n; k++) {
-                const a = (2 * Math.PI * k) / n;
-                const jb = 0.7 + 0.6 * vnoise(t, k);
-                const jm = 0.7 + 0.6 * vnoise(t, k + 10);
-                base.push([Math.cos(a) * rBase * jb, 0, Math.sin(a) * rBase * jb]);
-                mid.push([Math.cos(a) * rMid * jm, height * 0.45, Math.sin(a) * rMid * jm]);
-            }
-            const apex = [0, height, 0];
-
-            const shade = (avgY, facet) => {
-                const f = Math.min(1, avgY / height);
-                const s = (0.6 + 0.45 * f) * facet;
-                return [gray[0] * s, gray[1] * s, gray[2] * s];
-            };
-
-            for (let k = 0; k < n; k++) {
-                const kn = (k + 1) % n;
-                const facet = k % 2 === 0 ? 1.0 : 0.85;
-                pushTri(base[k], base[kn], mid[kn],
-                    shade(height * 0.22, facet), t);
-                pushTri(base[k], mid[kn], mid[k],
-                    shade(height * 0.3, facet), t);
-                pushTri(mid[k], mid[kn], apex,
-                    shade(height * 0.75, facet), t);
-            }
-        };
-
-        // Three gray variants: a boulder, a wide flat rock, a sharp one.
-        addRock(0, 6, 5.0, 4.2, 6.0, [0.44, 0.45, 0.48]);
-        addRock(1, 7, 8.0, 6.5, 3.2, [0.48, 0.48, 0.50]);
-        addRock(2, 5, 4.0, 2.8, 7.5, [0.40, 0.41, 0.46]);
+        // Two gray variants, both base at y=0 with similar footprints.
+        addModel(ROCK1_MODEL, 0, [0.45, 0.46, 0.49], 7.0);
+        addModel(ROCK2_MODEL, 1, [0.42, 0.43, 0.47], 7.5);
 
         this.vertexCount = pos.length / 3;
 
@@ -217,4 +203,22 @@ export class Rocks {
         gl.drawArraysInstanced(gl.TRIANGLES, 0, this.vertexCount, this.instanceCount);
         gl.bindVertexArray(null);
     }
+}
+
+const LIGHT_DIR = norm([-0.3, 0.9, 0.25]); // soft moonlight from above
+const ROCK_AMBIENT = 0.5;
+
+function norm(v) {
+    const l = Math.hypot(v[0], v[1], v[2]) || 1;
+    return [v[0] / l, v[1] / l, v[2] / l];
+}
+
+function dot(a, b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function faceNormal(p0, p1, p2) {
+    const ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
+    const vx = p2[0] - p0[0], vy = p2[1] - p0[1], vz = p2[2] - p0[2];
+    return norm([uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx]);
 }
