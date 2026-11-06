@@ -1,31 +1,33 @@
 import { createProgram, getUniforms } from "../core/glUtils.js";
+import { CellPicker } from "../core/CellPicker.js";
 import {
     CAMERA_UNIFORMS,
     PROJECT_FN,
     FOG_UNIFORMS,
     FOG_FN,
-    TERRAIN_GLSL,
+    GROUND_GLSL,
     setCameraUniforms,
-    setFogUniforms
+    setFogUniforms,
+    setGroundUniforms
 } from "../core/shaderChunks.js";
 import { TREES } from "../config.js";
 
 // Sparse pine trees scattered over the terrain, drawn with GPU instancing.
-// One static low-poly pine mesh is instanced across a grid of candidate cells
-// around the bird; the vertex shader decides per cell whether a tree is
-// present (hash), jitters its position, and plants its base on the exact
-// ground height (shared terrainHeight). Absent trees collapse to a point.
+// One static low-poly pine mesh is instanced over the cells a CellPicker
+// marks as present; the vertex shader jitters each tree's position and plants
+// its base on the shared ground lookup. Trees on hilltops or in lakes collapse
+// to a point.
 const VERTEX_SRC = `#version 300 es
 precision highp float;
 
 in vec3 aPos;          // local pine vertex (base at y=0)
 in vec3 aColor;
-in vec2 aOffset;       // per-instance local cell position
-uniform vec2 uSnap;    // snapped center offset in world space
+in vec2 aCell;         // picked cell id (present cells only)
 uniform float uCell;   // cell size
-uniform float uThreshold; // presence cutoff (higher = fewer trees)
 ${CAMERA_UNIFORMS}
-${TERRAIN_GLSL}
+uniform float uSeed;
+uniform float uAmp;
+${GROUND_GLSL}
 
 out vec3 vColor;
 out float vDepth;
@@ -37,18 +39,17 @@ float treeHash(vec2 p) {
 ${PROJECT_FN}
 
 void main() {
-    vec2 cell = aOffset + uSnap;
-    vec2 id = floor(cell / uCell);
+    vec2 id = aCell;
 
-    float present = step(uThreshold, treeHash(id));
     vec2 jitter = (vec2(treeHash(id + 3.1), treeHash(id + 6.7)) - 0.5) * uCell * 0.75;
     vec2 wxz = (id + 0.5) * uCell + jitter;
 
-    float ground = terrainHeight(wxz);
+    vec2 g = groundAt(wxz);
+    float ground = g.r;
     // Keep trees in the lowlands, off the high hilltops, and out of lakes.
     float lowland = step(ground, uAmp * 0.55);
-    float dry = step(lakeMask(wxz), 0.05);
-    float scale = (0.8 + treeHash(id + 9.2) * 0.8) * present * lowland * dry;
+    float dry = step(g.g, 0.05);
+    float scale = (0.8 + treeHash(id + 9.2) * 0.8) * lowland * dry;
 
     vec3 local = aPos * scale;
     vec3 world = vec3(wxz.x + local.x, ground + local.y, wxz.y + local.z);
@@ -131,34 +132,25 @@ export class Trees {
 
         this.vertexCount = pos.length / 3;
 
-        // Candidate instance cells (local, centered on origin).
-        const g = this.grid;
-        const offsets = new Float32Array(g * g * 2);
-        let o = 0;
-        for (let j = 0; j < g; j++) {
-            for (let i = 0; i < g; i++) {
-                offsets[o++] = (i - g / 2) * this.cell;
-                offsets[o++] = (j - g / 2) * this.cell;
-            }
-        }
-        this.instanceCount = g * g;
+        this.picker = new CellPicker(gl, this.grid, 0x1f3a);
 
         this.program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
         this.u = getUniforms(gl, this.program, [
-            "uSnap", "uCell", "uThreshold", "uSeed", "uAmp", "uFreq",
+            "uCell", "uSeed", "uAmp",
+            "uGround", "uGroundOrigin", "uGroundCell",
             "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
             "uScaleX", "uScaleY", "uNear", "uFar",
             "uFog", "uFogStart", "uFogEnd"
         ]);
         const aPos = gl.getAttribLocation(this.program, "aPos");
         const aColor = gl.getAttribLocation(this.program, "aColor");
-        const aOffset = gl.getAttribLocation(this.program, "aOffset");
+        const aCell = gl.getAttribLocation(this.program, "aCell");
 
         this.vao = gl.createVertexArray();
         gl.bindVertexArray(this.vao);
         this._attrib(aPos, new Float32Array(pos), 3, 0);
         this._attrib(aColor, new Float32Array(col), 3, 0);
-        this._attrib(aOffset, offsets, 2, 1);
+        this.picker.bind(gl, aCell);
         gl.bindVertexArray(null);
     }
 
@@ -178,23 +170,22 @@ export class Trees {
         const gl = renderer.gl;
         const cell = this.cell;
 
+        this.picker.update(gl, centerX, centerZ, cell, this.threshold, terrain.noise.seed);
+        if (this.picker.count === 0) {
+            return;
+        }
+
         gl.useProgram(this.program);
         setCameraUniforms(gl, this.u, camera, renderer);
         setFogUniforms(gl, this.u);
 
         gl.uniform1f(this.u.uSeed, terrain.noise.seed);
         gl.uniform1f(this.u.uAmp, terrain.amplitude);
-        gl.uniform1f(this.u.uFreq, terrain.hillDensity);
+        setGroundUniforms(gl, this.u, terrain);
         gl.uniform1f(this.u.uCell, cell);
-        gl.uniform1f(this.u.uThreshold, this.threshold);
-        gl.uniform2f(
-            this.u.uSnap,
-            Math.floor(centerX / cell) * cell,
-            Math.floor(centerZ / cell) * cell
-        );
 
         gl.bindVertexArray(this.vao);
-        gl.drawArraysInstanced(gl.TRIANGLES, 0, this.vertexCount, this.instanceCount);
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, this.vertexCount, this.picker.count);
         gl.bindVertexArray(null);
     }
 }

@@ -95,6 +95,31 @@ float terrainHeight(vec2 w) {
 }
 `;
 
+// Lookup table of the ground around the bird: terrainHeight and lakeMask baked
+// into a texture by Terrain whenever the grid moves, so per-vertex and
+// per-pixel consumers fetch it instead of re-evaluating the noise.
+export const GROUND_GLSL = `
+uniform sampler2D uGround;  // r = height, g = lake mask
+uniform vec2 uGroundOrigin; // world xz of texel (0, 0)
+uniform float uGroundCell;  // world size of one texel
+
+vec2 groundAt(vec2 w) {
+    vec2 t = (w - uGroundOrigin) / uGroundCell + 0.5;
+    return texture(uGround, t / vec2(textureSize(uGround, 0))).rg;
+}
+`;
+
+const GROUND_UNIT = 1; // unit 0 belongs to the moon texture
+
+export function setGroundUniforms(gl, u, terrain) {
+    gl.activeTexture(gl.TEXTURE0 + GROUND_UNIT);
+    gl.bindTexture(gl.TEXTURE_2D, terrain.groundTex);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.uniform1i(u.uGround, GROUND_UNIT);
+    gl.uniform2f(u.uGroundOrigin, terrain.groundOrigin[0], terrain.groundOrigin[1]);
+    gl.uniform1f(u.uGroundCell, terrain.cell);
+}
+
 export function setCameraUniforms(gl, u, camera, renderer) {
     gl.uniform3f(u.uCam, camera.x, camera.y, camera.z);
     gl.uniform1f(u.uCos, camera.cos);

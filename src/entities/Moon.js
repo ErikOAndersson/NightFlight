@@ -5,7 +5,7 @@ import { MOON } from "../config.js";
 // A textured moon billboard pinned to a fixed direction in the sky. It is
 // placed infinitely far along uDir (camera translation cancels out), so it
 // stays put in the sky as the bird flies and sweeps across as the camera
-// pivots. Drawn after the sky and before the terrain, which occludes it.
+// pivots. Drawn after the sky; the depth test hides it behind the scene.
 const VERTEX_SRC = `#version 300 es
 precision highp float;
 
@@ -105,13 +105,11 @@ export class Moon {
         gl.bindTexture(gl.TEXTURE_2D, this.texture);
         gl.uniform1i(this.u.uTex, 0);
 
-        gl.disable(gl.DEPTH_TEST);
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.bindVertexArray(this.vao);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         gl.bindVertexArray(null);
         gl.disable(gl.BLEND);
-        gl.enable(gl.DEPTH_TEST);
     }
 }

@@ -10,17 +10,19 @@ import {
 } from "../core/shaderChunks.js";
 import { TERRAIN } from "../config.js";
 
-// The terrain is a static grid uploaded once to the GPU. Every frame the
-// vertex shader evaluates the layered value noise (heightfield + normal),
-// projects each vertex, and the fragment shader shades and fogs it — so the
-// heavy per-vertex/per-pixel work runs on the graphics card, not the CPU.
+// The terrain is a static grid uploaded once to the GPU. Whenever the grid
+// moves (or the hills change) the layered value noise is baked on the GPU into
+// a ground lookup texture, one texel per grid vertex; the vertex shader then
+// just fetches its height and neighbors (for the normal) from it. Trees,
+// rocks, houses and water sample the same texture.
 const VERTEX_SRC = `#version 300 es
 precision highp float;
 
 in vec2 aXZ;            // local grid position (x, z)
 uniform vec2 uSnap;     // snapped camera offset in world space
+uniform sampler2D uGround;
+uniform float uCell;
 ${CAMERA_UNIFORMS}
-${TERRAIN_GLSL}
 
 out float vHeight;
 out float vDepth;
@@ -28,15 +30,21 @@ out vec3 vNormal;
 
 ${PROJECT_FN}
 
+float heightAt(ivec2 ij) {
+    ivec2 last = textureSize(uGround, 0) - 1;
+    return texelFetch(uGround, clamp(ij, ivec2(0), last), 0).r;
+}
+
 void main() {
     vec2 w = aXZ + uSnap;
-    float h = terrainHeight(w);
+    int nx = textureSize(uGround, 0).x;
+    ivec2 ij = ivec2(gl_VertexID % nx, gl_VertexID / nx); // texel of this grid vertex
+    float h = heightAt(ij);
 
-    // Surface normal from finite differences of the heightfield.
-    float e = 2.0;
-    float hx = terrainHeight(w + vec2(e, 0.0)) - terrainHeight(w - vec2(e, 0.0));
-    float hz = terrainHeight(w + vec2(0.0, e)) - terrainHeight(w - vec2(0.0, e));
-    vNormal = normalize(vec3(-hx, 2.0 * e, -hz));
+    // Surface normal from the neighboring grid heights.
+    float hx = heightAt(ij + ivec2(1, 0)) - heightAt(ij - ivec2(1, 0));
+    float hz = heightAt(ij + ivec2(0, 1)) - heightAt(ij - ivec2(0, 1));
+    vNormal = normalize(vec3(-hx, 2.0 * uCell, -hz));
 
     vHeight = h;
     float depth;
@@ -87,6 +95,27 @@ void main() {
     frag = vec4(applyFog(col, vDepth), 1.0);
 }`;
 
+// Bakes terrainHeight/lakeMask for each grid vertex into the ground texture.
+const BAKE_VERTEX_SRC = `#version 300 es
+in vec2 aPos;
+void main() {
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+const BAKE_FRAGMENT_SRC = `#version 300 es
+precision highp float;
+
+uniform vec2 uOrigin;   // world xz of texel (0, 0)
+uniform float uCell;
+${TERRAIN_GLSL}
+
+out vec4 frag;
+
+void main() {
+    vec2 w = uOrigin + floor(gl_FragCoord.xy) * uCell;
+    frag = vec4(terrainHeight(w), lakeMask(w), 0.0, 1.0);
+}`;
+
 export class Terrain {
     constructor(renderer, noise) {
         this.noise = noise;
@@ -112,7 +141,7 @@ export class Terrain {
 
         this.program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
         this.u = getUniforms(gl, this.program, [
-            "uSnap", "uSeed", "uAmp", "uFreq", "uEdge",
+            "uSnap", "uGround", "uCell", "uAmp", "uEdge",
             "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
             "uScaleX", "uScaleY", "uNear", "uFar",
             "uFog", "uFogStart", "uFogEnd"
@@ -191,25 +220,102 @@ export class Terrain {
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, edgeBuf);
 
         gl.bindVertexArray(null);
+
+        this._buildGround(nx, nz);
+    }
+
+    _buildGround(nx, nz) {
+        const gl = this.gl;
+        if (!gl.getExtension("EXT_color_buffer_float")) {
+            throw new Error("EXT_color_buffer_float is required for the ground lookup texture.");
+        }
+
+        // Half floats are filterable without extensions; ~0.1 unit height precision.
+        this.groundTex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this.groundTex);
+        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RG16F, nx, nz);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+
+        this.groundFbo = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.groundFbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.groundTex, 0);
+        if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+            throw new Error("Ground lookup framebuffer is incomplete.");
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+        this.groundSize = [nx, nz];
+        this.groundOrigin = [0, 0];
+        this.groundKey = "";
+
+        this.bakeProgram = createProgram(gl, BAKE_VERTEX_SRC, BAKE_FRAGMENT_SRC);
+        this.bakeU = getUniforms(gl, this.bakeProgram, ["uOrigin", "uCell", "uSeed", "uAmp", "uFreq"]);
+        const aPos = gl.getAttribLocation(this.bakeProgram, "aPos");
+        this.bakeVAO = gl.createVertexArray();
+        gl.bindVertexArray(this.bakeVAO);
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(aPos);
+        gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+        gl.bindVertexArray(null);
+    }
+
+    // Re-bakes the ground texture only when the grid snaps to a new cell or
+    // the noise inputs change; otherwise the last bake is still exact.
+    _updateGround(renderer, snapX, snapZ) {
+        const key = `${snapX},${snapZ},${this.noise.seed},${this.amplitude},${this.hillDensity}`;
+        if (key === this.groundKey) {
+            return;
+        }
+        this.groundKey = key;
+        this.groundOrigin = [snapX - (this.cols / 2) * this.cell, snapZ - (this.rows / 2) * this.cell];
+
+        const gl = this.gl;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.groundFbo);
+        gl.viewport(0, 0, this.groundSize[0], this.groundSize[1]);
+        gl.disable(gl.DEPTH_TEST);
+        gl.useProgram(this.bakeProgram);
+        gl.uniform2f(this.bakeU.uOrigin, this.groundOrigin[0], this.groundOrigin[1]);
+        gl.uniform1f(this.bakeU.uCell, this.cell);
+        gl.uniform1f(this.bakeU.uSeed, this.noise.seed);
+        gl.uniform1f(this.bakeU.uAmp, this.amplitude);
+        gl.uniform1f(this.bakeU.uFreq, this.hillDensity);
+        gl.bindVertexArray(this.bakeVAO);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.bindVertexArray(null);
+        gl.enable(gl.DEPTH_TEST);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, renderer.canvas.width, renderer.canvas.height);
     }
 
     render(renderer, camera, centerX, centerZ) {
         const gl = renderer.gl;
         const cell = this.cell;
 
-        gl.useProgram(this.program);
-        setCameraUniforms(gl, this.u, camera, renderer);
-        setFogUniforms(gl, this.u);
-
         // Snap the grid to fixed world-space cell boundaries (centered on the
         // bird) so the terrain stays anchored to the ground as it moves.
         const snapX = Math.floor(centerX / cell) * cell;
         const snapZ = Math.floor(centerZ / cell) * cell;
-        gl.uniform2f(this.u.uSnap, snapX, snapZ);
-        gl.uniform1f(this.u.uSeed, this.noise.seed);
-        gl.uniform1f(this.u.uAmp, this.amplitude);
-        gl.uniform1f(this.u.uFreq, this.hillDensity);
+        this._updateGround(renderer, snapX, snapZ);
 
+        gl.useProgram(this.program);
+        setCameraUniforms(gl, this.u, camera, renderer);
+        setFogUniforms(gl, this.u);
+        gl.uniform2f(this.u.uSnap, snapX, snapZ);
+        gl.uniform1f(this.u.uCell, cell);
+        gl.uniform1f(this.u.uAmp, this.amplitude);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, this.groundTex);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.uniform1i(this.u.uGround, 1);
+
+        // A heightfield seen from above never shows its back faces, so skip them.
+        gl.enable(gl.CULL_FACE);
         // Push the filled surface back a touch so edge lines sit on top.
         gl.enable(gl.POLYGON_OFFSET_FILL);
         gl.polygonOffset(1.0, 1.0);
@@ -217,6 +323,7 @@ export class Terrain {
         gl.bindVertexArray(this.triVAO);
         gl.drawElements(gl.TRIANGLES, this.triCount, gl.UNSIGNED_INT, 0);
         gl.disable(gl.POLYGON_OFFSET_FILL);
+        gl.disable(gl.CULL_FACE);
 
         if (this.showEdges) {
             gl.uniform1i(this.u.uEdge, 1);
