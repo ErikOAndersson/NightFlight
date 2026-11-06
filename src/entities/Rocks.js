@@ -1,12 +1,14 @@
 import { createProgram, getUniforms } from "../core/glUtils.js";
+import { CellPicker } from "../core/CellPicker.js";
 import {
     CAMERA_UNIFORMS,
     PROJECT_FN,
     FOG_UNIFORMS,
     FOG_FN,
-    TERRAIN_GLSL,
+    GROUND_GLSL,
     setCameraUniforms,
-    setFogUniforms
+    setFogUniforms,
+    setGroundUniforms
 } from "../core/shaderChunks.js";
 import { ROCKS } from "../config.js";
 import { ROCK1_MODEL } from "./Rock1.js";
@@ -23,14 +25,14 @@ precision highp float;
 in vec3 aPos;          // local rock vertex (base at y=0)
 in vec3 aColor;
 in float aType;        // which rock variant this vertex belongs to (0, 1, 2)
-in vec2 aOffset;       // per-instance local cell position
-uniform vec2 uSnap;    // snapped center offset in world space
+in vec2 aCell;         // picked cell id (present cells only)
 uniform float uCell;
-uniform float uThreshold; // presence cutoff (higher = fewer rocks)
 uniform float uSizeMin;
 uniform float uSizeMax;
 ${CAMERA_UNIFORMS}
-${TERRAIN_GLSL}
+uniform float uSeed;
+uniform float uAmp;
+${GROUND_GLSL}
 
 out vec3 vColor;
 out float vDepth;
@@ -42,20 +44,19 @@ float rockHash(vec2 p) {
 ${PROJECT_FN}
 
 void main() {
-    vec2 cell = aOffset + uSnap;
-    vec2 id = floor(cell / uCell);
+    vec2 id = aCell;
 
-    float present = step(uThreshold, rockHash(id));
     float chosen = floor(rockHash(id + 2.2) * 2.0);        // pick one of two models
     float typeMatch = step(abs(aType - chosen), 0.5);      // 1 if this vertex's type
 
     vec2 jitter = (vec2(rockHash(id + 3.1), rockHash(id + 6.7)) - 0.5) * uCell * 0.7;
     vec2 wxz = (id + 0.5) * uCell + jitter;
-    float ground = terrainHeight(wxz);
+    vec2 g = groundAt(wxz);
+    float ground = g.r;
 
     float sizeRand = uSizeMin + rockHash(id + 9.2) * (uSizeMax - uSizeMin);
-    float dry = step(lakeMask(wxz), 0.05);     // keep rocks out of lakes
-    float scale = sizeRand * present * typeMatch * dry;
+    float dry = step(g.g, 0.05);               // keep rocks out of lakes
+    float scale = sizeRand * typeMatch * dry;
 
     // Random yaw per cell so the repeated models never look identical.
     float ang = rockHash(id + 15.3) * 6.2831853;
@@ -132,22 +133,12 @@ export class Rocks {
 
         this.vertexCount = pos.length / 3;
 
-        // Candidate instance cells (local, centered on origin).
-        const g = this.grid;
-        const offsets = new Float32Array(g * g * 2);
-        let o = 0;
-        for (let j = 0; j < g; j++) {
-            for (let i = 0; i < g; i++) {
-                offsets[o++] = (i - g / 2) * this.cell;
-                offsets[o++] = (j - g / 2) * this.cell;
-            }
-        }
-        this.instanceCount = g * g;
+        this.picker = new CellPicker(gl, this.grid, 0x52c7);
 
         this.program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
         this.u = getUniforms(gl, this.program, [
-            "uSnap", "uCell", "uThreshold", "uSizeMin", "uSizeMax",
-            "uSeed", "uAmp", "uFreq",
+            "uCell", "uSizeMin", "uSizeMax",
+            "uSeed", "uAmp", "uGround", "uGroundOrigin", "uGroundCell",
             "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
             "uScaleX", "uScaleY", "uNear", "uFar",
             "uFog", "uFogStart", "uFogEnd"
@@ -155,14 +146,14 @@ export class Rocks {
         const aPos = gl.getAttribLocation(this.program, "aPos");
         const aColor = gl.getAttribLocation(this.program, "aColor");
         const aType = gl.getAttribLocation(this.program, "aType");
-        const aOffset = gl.getAttribLocation(this.program, "aOffset");
+        const aCell = gl.getAttribLocation(this.program, "aCell");
 
         this.vao = gl.createVertexArray();
         gl.bindVertexArray(this.vao);
         this._attrib(aPos, new Float32Array(pos), 3, 0);
         this._attrib(aColor, new Float32Array(col), 3, 0);
         this._attrib(aType, new Float32Array(type), 1, 0);
-        this._attrib(aOffset, offsets, 2, 1);
+        this.picker.bind(gl, aCell);
         gl.bindVertexArray(null);
     }
 
@@ -182,25 +173,24 @@ export class Rocks {
         const gl = renderer.gl;
         const cell = this.cell;
 
+        this.picker.update(gl, centerX, centerZ, cell, ROCKS.threshold, terrain.noise.seed);
+        if (this.picker.count === 0) {
+            return;
+        }
+
         gl.useProgram(this.program);
         setCameraUniforms(gl, this.u, camera, renderer);
         setFogUniforms(gl, this.u);
 
         gl.uniform1f(this.u.uSeed, terrain.noise.seed);
         gl.uniform1f(this.u.uAmp, terrain.amplitude);
-        gl.uniform1f(this.u.uFreq, terrain.hillDensity);
+        setGroundUniforms(gl, this.u, terrain);
         gl.uniform1f(this.u.uCell, cell);
-        gl.uniform1f(this.u.uThreshold, ROCKS.threshold);
         gl.uniform1f(this.u.uSizeMin, ROCKS.sizeMin);
         gl.uniform1f(this.u.uSizeMax, ROCKS.sizeMax);
-        gl.uniform2f(
-            this.u.uSnap,
-            Math.floor(centerX / cell) * cell,
-            Math.floor(centerZ / cell) * cell
-        );
 
         gl.bindVertexArray(this.vao);
-        gl.drawArraysInstanced(gl.TRIANGLES, 0, this.vertexCount, this.instanceCount);
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, this.vertexCount, this.picker.count);
         gl.bindVertexArray(null);
     }
 }

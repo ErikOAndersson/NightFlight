@@ -52,6 +52,14 @@ export const ROCKS = {
     sizeMax: 1.8         // largest rock scale
 };
 
+export const HOUSES = {
+    cell: 320,           // spacing of candidate cells (houses are rare landmarks)
+    grid: 10,            // candidate cells per side (stays inside the ground lookup)
+    threshold: 0.80,     // presence cutoff (higher = fewer houses)
+    scale: 4,            // world units per model unit (model ~7.5 tall, ~12 wide)
+    wallColor: [0.50, 0.09, 0.09] // faces without a material override
+};
+
 export const BIRD = {
     altitude: 95,        // absolute altitude (camera sits at CAMERA height)
     scale: 6,            // multiplier applied to the imported model (model span ~15)
@@ -78,5 +86,14 @@ export const WATER = {
     scale: 0.0013,     // lake-mask noise frequency (smaller = larger, rarer lakes)
     threshold: 0.70,   // lake-mask cutoff (higher = rarer lakes)
     edge: 0.02,        // lake-mask shore band (larger = gentler shores)        0.12
-    depthFade: 16      // how quickly shallows fade to the shoreline
+    depthFade: 16,     // how quickly shallows fade to the shoreline
+    rippleStrength: 0.12, // surface normal tilt (wider, more broken moon path)
+    rippleSpeed: 1.2,     // how fast the facets rock
+    facetSize: 5,         // world size of a ripple facet (bigger = blockier glints)
+    glintSharpness: 400,  // tight moon highlight exponent
+    glintStrength: 1.6,
+    farSharpness: 160,    // glint exponent where facets have faded (distant water)
+    farStrength: 0.45,    // glint brightness factor for distant water
+    sheenSharpness: 18,   // broad moonlit sheen exponent
+    sheenStrength: 0.12
 };

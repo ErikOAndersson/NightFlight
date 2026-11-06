@@ -6,6 +6,7 @@ import { Terrain } from "./world/Terrain.js";
 import { Water } from "./entities/Water.js";
 import { Trees } from "./entities/Trees.js";
 import { Rocks } from "./entities/Rocks.js";
+import { Houses } from "./entities/Houses.js";
 import { Bird } from "./entities/Bird.js";
 import { CAMERA, TERRAIN, TREES } from "./config.js";
 
@@ -21,6 +22,7 @@ export class Scene {
         this.water = new Water(renderer);
         this.trees = new Trees(renderer);
         this.rocks = new Rocks(renderer);
+        this.houses = new Houses(renderer);
         this.bird = new Bird(renderer);
 
         // The bird's horizontal world position (it flies along +z).
@@ -126,12 +128,14 @@ export class Scene {
         this.camera.orbit(bx, this.bird.altitude, bz);
 
         renderer.clear();
-        this.sky.render(renderer);
-        this.moon.render(renderer, this.camera);
         this.terrain.render(renderer, this.camera, bx, bz);
         this.water.render(renderer, this.camera, bx, bz, this.terrain, time);
         this.trees.render(renderer, this.camera, bx, bz, this.terrain);
         this.rocks.render(renderer, this.camera, bx, bz, this.terrain);
+        this.houses.render(renderer, this.camera, bx, bz, this.terrain);
         this.bird.render(renderer, this.camera, bx, bz, time);
+        // Sky last among the opaque passes: depth testing skips covered pixels.
+        this.sky.render(renderer);
+        this.moon.render(renderer, this.camera);
     }
 }

@@ -1,8 +1,8 @@
 import { createProgram, getUniforms } from "../core/glUtils.js";
 
 // Fullscreen night sky: a dark gradient with sparse procedural stars and a
-// discreet distant nebula streak. Drawn first each frame with depth writes
-// disabled so the terrain and bird render in front of it.
+// discreet distant nebula streak. Drawn after the opaque scene at the far
+// plane without depth writes, so only uncovered pixels run the shader.
 const VERTEX_SRC = `#version 300 es
 precision highp float;
 
