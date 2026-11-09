@@ -26,6 +26,7 @@ ${CAMERA_UNIFORMS}
 
 out float vHeight;
 out float vDepth;
+out vec2 vWorld;
 out vec3 vNormal;
 
 ${PROJECT_FN}
@@ -47,6 +48,7 @@ void main() {
     vNormal = normalize(vec3(-hx, 2.0 * uCell, -hz));
 
     vHeight = h;
+    vWorld = w;
     float depth;
     gl_Position = projectWorld(vec3(w.x, h, w.y), depth);
     vDepth = depth;
@@ -57,15 +59,30 @@ precision highp float;
 
 in float vHeight;
 in float vDepth;
+in vec2 vWorld;
 in vec3 vNormal;
 
 uniform float uAmp;
+uniform vec4 uDetail;   // strength, patch scale, speckle scale, fade start
+uniform float uDetailFadeEnd;
 uniform int uEdge;      // 1 while drawing the wireframe overlay
 ${FOG_UNIFORMS}
 
 ${FOG_FN}
 
 out vec4 frag;
+
+float dHash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float dNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(dHash(i), dHash(i + vec2(1.0, 0.0)), f.x),
+               mix(dHash(i + vec2(0.0, 1.0)), dHash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
 
 void main() {
     if (uEdge == 1) {
@@ -83,6 +100,11 @@ void main() {
         float k = (t - 0.5) / 0.5;
         col = vec3(100.0 + k * 70.0, 150.0 - k * 40.0, 75.0 + k * 25.0) / 255.0;
     }
+
+    // Soft patches plus fine speckle, faded with distance to avoid shimmer.
+    float fade = 1.0 - smoothstep(uDetail.w, uDetailFadeEnd, vDepth);
+    float n = 0.65 * dNoise(vWorld / uDetail.y) + 0.35 * dNoise(vWorld / uDetail.z);
+    col *= 1.0 + (n - 0.5) * 2.0 * uDetail.x * fade;
 
     vec3 N = normalize(vNormal);
     vec3 L = normalize(vec3(-0.4, 1.0, 0.35));
@@ -141,7 +163,7 @@ export class Terrain {
 
         this.program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
         this.u = getUniforms(gl, this.program, [
-            "uSnap", "uGround", "uCell", "uAmp", "uEdge",
+            "uSnap", "uGround", "uCell", "uAmp", "uEdge", "uDetail", "uDetailFadeEnd",
             "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
             "uScaleX", "uScaleY", "uNear", "uFar",
             "uFog", "uFogStart", "uFogEnd"
@@ -313,6 +335,9 @@ export class Terrain {
         gl.bindTexture(gl.TEXTURE_2D, this.groundTex);
         gl.activeTexture(gl.TEXTURE0);
         gl.uniform1i(this.u.uGround, 1);
+        const d = TERRAIN.detail;
+        gl.uniform4f(this.u.uDetail, d.strength, d.patchScale, d.speckleScale, d.fadeStart);
+        gl.uniform1f(this.u.uDetailFadeEnd, d.fadeEnd);
 
         // A heightfield seen from above never shows its back faces, so skip them.
         gl.enable(gl.CULL_FACE);

@@ -10,6 +10,13 @@ import {
     setFogUniforms,
     setGroundUniforms
 } from "../core/shaderChunks.js";
+import {
+    SHADOW_UNIFORMS,
+    SHADOW_VERTEX_FN,
+    SHADOW_FRAGMENT_FN,
+    SHADOW_UNIFORM_NAMES,
+    ShadowPass
+} from "../core/Shadow.js";
 import { TREES } from "../config.js";
 
 // Sparse pine trees scattered over the terrain, drawn with GPU instancing.
@@ -27,10 +34,13 @@ uniform float uCell;   // cell size
 ${CAMERA_UNIFORMS}
 uniform float uSeed;
 uniform float uAmp;
+${SHADOW_UNIFORMS}
 ${GROUND_GLSL}
+${SHADOW_VERTEX_FN}
 
 out vec3 vColor;
 out float vDepth;
+out float vAlpha;
 
 float treeHash(vec2 p) {
     return fract(sin(dot(p + uSeed + vec2(19.3, 47.1), vec2(269.5, 183.3))) * 43758.5453);
@@ -51,13 +61,20 @@ void main() {
     float dry = step(g.g, 0.05);
     float scale = (0.8 + treeHash(id + 9.2) * 0.8) * lowland * dry;
 
-    vec3 local = aPos * scale;
-    vec3 world = vec3(wxz.x + local.x, ground + local.y, wxz.y + local.z);
+    vec3 world;
+    if (uShadow > 0.5) {
+        world = shadowWorld(wxz, aPos.xy, scale, vAlpha);
+        vColor = vec3(0.0);
+    } else {
+        vec3 local = aPos * scale;
+        world = vec3(wxz.x + local.x, ground + local.y, wxz.y + local.z);
+        vAlpha = 1.0;
+        vColor = aColor;
+    }
 
     float depth;
     gl_Position = projectWorld(world, depth);
     vDepth = depth;
-    vColor = aColor;
 }`;
 
 const FRAGMENT_SRC = `#version 300 es
@@ -65,13 +82,20 @@ precision highp float;
 
 in vec3 vColor;
 in float vDepth;
+in float vAlpha;
+uniform float uShadow;
 ${FOG_UNIFORMS}
 
 ${FOG_FN}
+${SHADOW_FRAGMENT_FN}
 
 out vec4 frag;
 
 void main() {
+    if (uShadow > 0.5) {
+        frag = shadowFrag(vDepth, vAlpha);
+        return;
+    }
     frag = vec4(applyFog(vColor, vDepth), 1.0);
 }`;
 
@@ -137,6 +161,7 @@ export class Trees {
         this.program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
         this.u = getUniforms(gl, this.program, [
             "uCell", "uSeed", "uAmp",
+            ...SHADOW_UNIFORM_NAMES,
             "uGround", "uGroundOrigin", "uGroundCell",
             "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
             "uScaleX", "uScaleY", "uNear", "uFar",
@@ -152,6 +177,8 @@ export class Trees {
         this._attrib(aColor, new Float32Array(col), 3, 0);
         this.picker.bind(gl, aCell);
         gl.bindVertexArray(null);
+
+        this.shadow = new ShadowPass(gl, this.picker, aPos, aCell, TREES.shadow);
     }
 
     _attrib(location, data, size, divisor) {
@@ -185,7 +212,9 @@ export class Trees {
         gl.uniform1f(this.u.uCell, cell);
 
         gl.bindVertexArray(this.vao);
+        gl.uniform1f(this.u.uShadow, 0);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, this.vertexCount, this.picker.count);
+        this.shadow.render(gl, this.u, this.picker.count);
         gl.bindVertexArray(null);
     }
 }

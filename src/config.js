@@ -30,7 +30,16 @@ export const TERRAIN = {
     densityMax: 3.0,
     heightStep: 15,      // amplitude change per step
     heightMin: 10,
-    heightMax: 240
+    heightMax: 240,
+
+    // World-space colour variation on the ground.
+    detail: {
+        strength: 0.22,   // brightness swing (0 = off)
+        patchScale: 90,   // world units per large soft patch
+        speckleScale: 14, // world units per fine speckle
+        fadeStart: 400,   // depth where detail starts fading out
+        fadeEnd: 1500     // depth where it is gone (keeps the distance calm)
+    }
 };
 
 export const TREES = {
@@ -41,7 +50,16 @@ export const TREES = {
     // Live adjustment (keys 5-6).
     thresholdStep: 0.02,
     thresholdMin: 0.60,  // most trees
-    thresholdMax: 0.985  // fewest trees
+    thresholdMax: 0.985, // fewest trees
+
+    // Cheap fake shadow: a tapered strip on the ground pointing away from the moon.
+    shadow: {
+        opacity: 0.4,    // darkest alpha, at the trunk (0 = off)
+        length: 60,      // world units at tree scale 1
+        width: 7,        // half-width at the trunk, world units at scale 1
+        segments: 8,     // strip subdivisions so it follows the terrain
+        lift: 0.8        // height above the ground to avoid z-fighting
+    }
 };
 
 export const ROCKS = {
@@ -49,7 +67,8 @@ export const ROCKS = {
     grid: 48,            // candidate cells per side (centered on the bird)
     threshold: 0.92,     // presence cutoff (higher = fewer rocks)
     sizeMin: 0.6,        // smallest rock scale
-    sizeMax: 1.8         // largest rock scale
+    sizeMax: 1.8,        // largest rock scale
+    shadow: { opacity: 0.4, length: 14, width: 5, segments: 5, lift: 0.5 } // per size 1
 };
 
 export const HOUSES = {
@@ -57,7 +76,8 @@ export const HOUSES = {
     grid: 10,            // candidate cells per side (stays inside the ground lookup)
     threshold: 0.80,     // presence cutoff (higher = fewer houses)
     scale: 4,            // world units per model unit (model ~7.5 tall, ~12 wide)
-    wallColor: [0.50, 0.09, 0.09] // faces without a material override
+    wallColor: [0.50, 0.09, 0.09], // faces without a material override
+    shadow: { opacity: 0.4, length: 80, width: 22, segments: 8, lift: 0.8 } // world units
 };
 
 export const BIRD = {
@@ -96,4 +116,14 @@ export const WATER = {
     farStrength: 0.45,    // glint brightness factor for distant water
     sheenSharpness: 18,   // broad moonlit sheen exponent
     sheenStrength: 0.12
+};
+
+export const SKY = {
+    // Horizontal angle (radians) one copy of the image covers; smaller values
+    // magnify the stars and reduce the squeezed "fisheye" look (mirrored beyond).
+    coverage: Math.PI/2,   // Math.PI
+    imageAspect: 4,   // image width / height
+    horizon: 0.0,     // image height fraction (0 = bottom edge) at the horizon
+    heading: 0,       // panorama rotation around the vertical axis (radians)
+    brightness: 1.0
 };
