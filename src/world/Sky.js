@@ -1,72 +1,51 @@
 import { createProgram, getUniforms } from "../core/glUtils.js";
+import { CAMERA_UNIFORMS, setCameraUniforms } from "../core/shaderChunks.js";
+import { SKY } from "../config.js";
 
-// Fullscreen night sky: a dark gradient with sparse procedural stars and a
-// discreet distant nebula streak. Drawn after the opaque scene at the far
-// plane without depth writes, so only uncovered pixels run the shader.
+// Cylindrical night-sky panorama. Each pixel's view ray is rebuilt by inverting
+// the shared yaw→pitch projection, then looked up by azimuth/elevation, so the
+// sky pans with the ground as the camera pivots. Drawn after the opaque scene
+// at the far plane without depth writes, so only uncovered pixels run it.
 const VERTEX_SRC = `#version 300 es
 precision highp float;
 
 in vec2 aPos;   // clip-space fullscreen triangle
-out vec2 vUv;   // 0..1 across the screen
+out vec2 vNdc;
 
 void main() {
-    vUv = aPos * 0.5 + 0.5;
+    vNdc = aPos;
     gl_Position = vec4(aPos, 0.9999, 1.0);
 }`;
 
 const FRAGMENT_SRC = `#version 300 es
 precision highp float;
 
-in vec2 vUv;
+in vec2 vNdc;
+uniform sampler2D uTex;
+uniform float uCoverage;
+uniform float uAspect;
+uniform float uHorizon;
+uniform float uHeading;
+uniform float uBrightness;
+${CAMERA_UNIFORMS}
 out vec4 frag;
 
-const vec3 TOP = vec3(0.02, 0.03, 0.06);     // deep night zenith
-const vec3 HORIZON = vec3(0.09, 0.11, 0.18); // slightly lifted near horizon
-
-float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-}
-
-float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    float a = hash(i);
-    float b = hash(i + vec2(1.0, 0.0));
-    float c = hash(i + vec2(0.0, 1.0));
-    float d = hash(i + vec2(1.0, 1.0));
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-
-// Sparse starfield: only a few grid cells hold a star, placed at a random
-// spot inside the cell with a soft falloff and varied brightness.
-float stars(vec2 uv) {
-    vec2 grid = uv * vec2(260.0, 150.0);
-    vec2 id = floor(grid);
-    vec2 f = fract(grid);
-    float present = step(0.985, hash(id));
-    vec2 c = vec2(hash(id + 1.3), hash(id + 2.7));
-    float d = length(f - c);
-    float s = present * smoothstep(0.12, 0.0, d);
-    return s * (0.4 + 0.6 * hash(id + 5.1));
-}
-
 void main() {
-    float y = clamp(vUv.y, 0.0, 1.0);
-    vec3 col = mix(HORIZON, TOP, pow(y, 0.6));
+    // Inverse of projectWorld: view-space ray, then undo pitch and yaw.
+    float rx = vNdc.x / uScaleX;
+    float ry = vNdc.y / uScaleY;
+    float rz = 1.0;
+    float dy = ry * uCos + rz * uSin;
+    float rz0 = -ry * uSin + rz * uCos;
+    float dx = rx * uYawCos + rz0 * uYawSin;
+    float dz = -rx * uYawSin + rz0 * uYawCos;
 
-    // Faraway nebula: a soft diagonal streak of discreet color.
-    float n = noise(vUv * 3.0);
-    float t = vUv.x * 0.6 + vUv.y * 0.8;
-    float band = exp(-pow((t - 0.95 + n * 0.2) / 0.2, 2.0));
-    band *= 0.55 + 0.45 * noise(vUv * 6.0);
-    vec3 nebula = mix(vec3(0.28, 0.10, 0.38), vec3(0.08, 0.22, 0.30), n);
-    col += nebula * band * 0.22;
-
-    // Sparse stars on top.
-    col += vec3(stars(vUv));
-
-    frag = vec4(col, 1.0);
+    float az = atan(dx, dz) + uHeading;
+    // True cylinder: height grows with tan(elevation); below the horizon the
+    // image mirrors instead of smearing its edge row.
+    float el = clamp(atan(abs(dy), length(vec2(dx, dz))), 0.0, 1.45);
+    vec2 uv = vec2(az / uCoverage, uHorizon + tan(el) * uAspect / uCoverage);
+    frag = vec4(texture(uTex, uv).rgb * uBrightness, 1.0);
 }`;
 
 export class Sky {
@@ -74,6 +53,11 @@ export class Sky {
         const gl = renderer.gl;
         this.gl = gl;
         this.program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
+        this.u = getUniforms(gl, this.program, [
+            "uTex", "uCoverage", "uAspect", "uHorizon", "uHeading", "uBrightness",
+            "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
+            "uScaleX", "uScaleY", "uNear", "uFar"
+        ]);
 
         const aPos = gl.getAttribLocation(this.program, "aPos");
         const quad = new Float32Array([
@@ -88,11 +72,50 @@ export class Sky {
         gl.enableVertexAttribArray(aPos);
         gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
         gl.bindVertexArray(null);
+
+        this.texture = this._loadTexture("Assets/wide_sky.webp");
     }
 
-    render(renderer) {
+    _loadTexture(url) {
+        const gl = this.gl;
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        // Dark placeholder until the image loads.
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
+            gl.UNSIGNED_BYTE, new Uint8Array([5, 8, 15, 255]));
+
+        const img = new Image();
+        img.onload = () => {
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+            // No mipmaps: the atan seam would break derivative-based LOD.
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            // Mirrored so the non-tiling left/right edges blend seamlessly.
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.MIRRORED_REPEAT);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.MIRRORED_REPEAT);
+        };
+        img.src = url;
+        return tex;
+    }
+
+    render(renderer, camera) {
         const gl = renderer.gl;
         gl.useProgram(this.program);
+        setCameraUniforms(gl, this.u, camera, renderer);
+        gl.uniform1f(this.u.uCoverage, SKY.coverage);
+        gl.uniform1f(this.u.uAspect, SKY.imageAspect);
+        gl.uniform1f(this.u.uHorizon, SKY.horizon);
+        gl.uniform1f(this.u.uHeading, SKY.heading);
+        gl.uniform1f(this.u.uBrightness, SKY.brightness);
+
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, this.texture);
+        gl.uniform1i(this.u.uTex, 2);
+        gl.activeTexture(gl.TEXTURE0);
+
         gl.depthMask(false);
         gl.bindVertexArray(this.vao);
         gl.drawArrays(gl.TRIANGLES, 0, 3);

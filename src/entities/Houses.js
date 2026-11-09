@@ -10,6 +10,13 @@ import {
     setFogUniforms,
     setGroundUniforms
 } from "../core/shaderChunks.js";
+import {
+    SHADOW_UNIFORMS,
+    SHADOW_VERTEX_FN,
+    SHADOW_FRAGMENT_FN,
+    SHADOW_UNIFORM_NAMES,
+    ShadowPass
+} from "../core/Shadow.js";
 import { HOUSES, WATER } from "../config.js";
 import { HOUSE3_MODEL } from "./House3.js";
 
@@ -28,10 +35,13 @@ uniform float uFootprint; // half-diagonal of the scaled footprint
 ${CAMERA_UNIFORMS}
 uniform float uSeed;
 uniform float uAmp;
+${SHADOW_UNIFORMS}
 ${GROUND_GLSL}
+${SHADOW_VERTEX_FN}
 
 out vec3 vColor;
 out float vDepth;
+out float vAlpha;
 
 float houseHash(vec2 p) {
     return fract(sin(dot(p + uSeed + vec2(37.3, 91.1), vec2(269.5, 183.3))) * 43758.5453);
@@ -55,6 +65,16 @@ void main() {
     float dry = step(g.g, 0.01) * step(${WATER.level.toFixed(1)}, ground);
     float scale = uScale * lowland * dry;
 
+    if (uShadow > 0.5) {
+        vec3 sw = shadowWorld(wxz, aPos.xy, lowland * dry, vAlpha);
+        float d0;
+        gl_Position = projectWorld(sw, d0);
+        vDepth = d0;
+        vColor = vec3(0.0);
+        return;
+    }
+    vAlpha = 1.0;
+
     float ang = houseHash(id + 15.3) * 6.2831853;
     float ca = cos(ang), sa = sin(ang);
     vec3 s = aPos * scale;
@@ -72,13 +92,20 @@ precision highp float;
 
 in vec3 vColor;
 in float vDepth;
+in float vAlpha;
+uniform float uShadow;
 ${FOG_UNIFORMS}
 
 ${FOG_FN}
+${SHADOW_FRAGMENT_FN}
 
 out vec4 frag;
 
 void main() {
+    if (uShadow > 0.5) {
+        frag = shadowFrag(vDepth, vAlpha);
+        return;
+    }
     frag = vec4(applyFog(vColor, vDepth), 1.0);
 }`;
 
@@ -132,7 +159,8 @@ export class Houses {
             "uSeed", "uAmp", "uGround", "uGroundOrigin", "uGroundCell",
             "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
             "uScaleX", "uScaleY", "uNear", "uFar",
-            "uFog", "uFogStart", "uFogEnd"
+            "uFog", "uFogStart", "uFogEnd",
+            ...SHADOW_UNIFORM_NAMES
         ]);
         const aPos = gl.getAttribLocation(this.program, "aPos");
         const aColor = gl.getAttribLocation(this.program, "aColor");
@@ -144,6 +172,8 @@ export class Houses {
         this._attrib(aColor, new Float32Array(col), 3, 0);
         this.picker.bind(gl, aCell);
         gl.bindVertexArray(null);
+
+        this.shadow = new ShadowPass(gl, this.picker, aPos, aCell, HOUSES.shadow);
     }
 
     _attrib(location, data, size, divisor) {
@@ -178,6 +208,7 @@ export class Houses {
 
         gl.bindVertexArray(this.vao);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, this.vertexCount, this.picker.count);
+        this.shadow.render(gl, this.u, this.picker.count);
         gl.bindVertexArray(null);
     }
 }

@@ -32,9 +32,12 @@ export class Scene {
         // Automatic camera re-positioning.
         this.autoCamera = true;
         this.autoTimer = 0;
+        this.paused = false;
     }
 
     update(dt) {
+        const camDt = dt;
+        if (this.paused) dt = 0; // camera still eases so pivots stay responsive
         this.birdZ += this.camera.speed * dt; // the bird flies forward
 
         // Every so often, pick a new random heading and a moderate elevation.
@@ -47,7 +50,7 @@ export class Scene {
             this.camera.setTarget(yaw, elevation);
         }
 
-        this.camera.update(dt); // ease toward the current target
+        this.camera.update(camDt); // ease toward the current target
     }
 
     // New random world; restart the flight at the origin.
@@ -79,6 +82,10 @@ export class Scene {
     }
 
     // Toggle the automatic camera re-positioning.
+    togglePause() {
+        this.paused = !this.paused;
+    }
+
     toggleAutoCamera() {
         this.autoCamera = !this.autoCamera;
         this.autoTimer = 0;
@@ -135,7 +142,7 @@ export class Scene {
         this.houses.render(renderer, this.camera, bx, bz, this.terrain);
         this.bird.render(renderer, this.camera, bx, bz, time);
         // Sky last among the opaque passes: depth testing skips covered pixels.
-        this.sky.render(renderer);
+        this.sky.render(renderer, this.camera);
         this.moon.render(renderer, this.camera);
     }
 }

@@ -8,18 +8,24 @@ const renderer = new Renderer(canvas);
 const scene = new Scene(renderer);
 
 let last = performance.now();
+let clock = last / 1000;
 function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
 
     scene.update(dt);
-    scene.render(renderer, now / 1000);
+    if (!scene.paused) clock += dt; // animation time freezes while paused
+    scene.render(renderer, clock);
     requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
 window.addEventListener("keydown", (e) => {
     switch (e.key.toLowerCase()) {
+        case " ":
+            scene.togglePause();
+            e.preventDefault();
+            break;
         case "r":
             scene.regenerate();
             break;

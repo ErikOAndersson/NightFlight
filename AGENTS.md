@@ -32,12 +32,14 @@ over procedural terrain, rendered to an HTML5 canvas with vanilla ES modules
 - `src/Scene.js` — owns all entities, the bird's forward progress, the camera
   auto-reposition timer, and the per-frame draw order.
 - `src/config.js` — **all tunable constants** grouped as `CAMERA`, `TERRAIN`,
-  `TREES`, `ROCKS`, `HOUSES`, `BIRD` (incl. `scale`/`flap`), `MOON`, `FOG`,
-  `WATER` (incl. the moon-glint/ripple tunables). Put
+  `TREES`, `ROCKS`, `HOUSES` (each with a `shadow` block), `BIRD` (incl.
+  `scale`/`flap`), `MOON`, `FOG`, `SKY`, `WATER` (incl. the moon-glint/ripple
+  tunables); `TERRAIN.detail` holds the ground colour-variation tunables. Put
   new tunables here, not inline.
 - `src/core/` — `Renderer` (WebGL2 context/clear), `Camera` (orbit + eased
   targets), `glUtils` (shader compile/link), `shaderChunks` (shared GLSL +
-  uniform setters), `CellPicker` (chooses which prop cells are present).
+  uniform setters), `CellPicker` (chooses which prop cells are present),
+  `Shadow` (shared fake-shadow GLSL + `ShadowPass`).
 - `src/world/` — `Noise` (seed holder only), `Sky`, `Terrain`.
 - `src/entities/` — `Moon`, `Water`, `Trees`, `Rocks`, `Houses`, `Bird`.
   `Bird` imports its mesh from `Bird2.js`; `Rocks` imports two meshes from
@@ -49,7 +51,7 @@ over procedural terrain, rendered to an HTML5 canvas with vanilla ES modules
 
 Draw order each frame (in `Scene.render`): clear → terrain (re-bakes the ground
 lookup first when needed) → water → trees → rocks → houses → bird → sky → moon.
-The sky is drawn after the opaque passes at the far plane without depth
+Each prop draws its shadow strips right after its own mesh. The sky is drawn after the opaque passes at the far plane without depth
 writes, so the depth test skips pixels already covered; the moon is depth-
 tested so terrain hides it.
 
@@ -94,6 +96,25 @@ tested so terrain hides it.
   boundaries to avoid sampling shimmer. Terrain is drawn with back-face culling
   (a heightfield seen from above never shows back faces); props and the bird
   stay two-sided because their models rely on it (open tree cones, thin wings).
+- **Sky** is a cylindrical panorama (`Assets/wide_sky.webp`, 4096x1024, horizon
+  at the bottom edge). `Sky`'s fullscreen fragment shader inverts the shared
+  projection (`uScaleX/Y`, pitch, yaw) to rebuild each pixel's view ray, then
+  looks up azimuth/`tan(elevation)` (true cylinder; `SKY.coverage` sets the
+  horizontal angle one image copy covers). Both wraps are mirrored, which hides
+  the non-tiling left/right edges and the below-horizon smear. No mipmaps
+  (the `atan` seam would break derivative LOD). Uses texture unit 2. Because it
+  is direction-only, it pans with camera yaw/pitch but not with flight.
+- **Ground detail** is world-space value noise (large patches + fine speckle)
+  multiplied into the terrain colour in the fragment shader (`vWorld` varying,
+  `TERRAIN.detail`), faded out with depth to avoid shimmer. Slope tinting,
+  stretched streaks and normal bumps were tried and deliberately dropped to keep
+  the shader cheap on weak devices.
+- **Fake shadows.** `core/Shadow.js` gives trees, rocks and houses a flat
+  tapered strip per instance, pointing away from `MOON.direction` and draped on
+  the ground via `groundAt` (so the strips are subdivided). It is a second
+  instanced draw in the same program, switched by the `uShadow` uniform (blended,
+  no depth write); alpha fades with distance. Collapsed instances (hilltop/lake)
+  collapse their shadow too. New props wanting shadows should reuse `ShadowPass`.
 - **Water** is one quad over the view; its fragment shader discards non-lake
   pixels after a single lookup, then shades depth, faceted low-poly ripples and
   a moon glint. Facets fade to flat by on-screen size (`fwidth`) to avoid
@@ -112,13 +133,15 @@ tested so terrain hides it.
 
 Implemented: procedural night terrain, fog, moonlit shading; orbit camera with
 manual (`←→↑↓`) + automatic pivots; controls (`R` regenerate, `G` wireframe,
-`C` auto-cam toggle, `1/2` hills, `3/4` height, `5/6` trees, `M` toggle the
+`C` auto-cam toggle, `Space` pause (freezes flight, auto-cam timer and
+animation clock; camera still eases), `1/2` hills, `3/4` height, `5/6` trees, `M` toggle the
 help overlay); instanced pines; a textured moon; a starfield + nebula sky;
 occasional lakes with a terrain-following shoreline; an imported low-poly bird
 (`Bird2.js`) that alternates between flapping and gliding on a random 10–20s
 timer; two imported, randomly-sized and -rotated rock models
 (`Rock1.js`/`Rock2.js`); rare houses (`House3.js`) with a lit window; and a
-faceted moon reflection on the lakes.
+faceted moon reflection on the lakes; a panoramic sky image; subtle ground
+colour variation; and fake ground shadows under trees, rocks and houses.
 
 Natural extensions: clouds, birds flocking, snow on peaks. When swapping in new `.obj` models, follow the `Bird2.js`/`Rock1.js`
 pattern (plain `export const` of `{ vertices, faces, edges }`, 0-based triangle

@@ -10,6 +10,13 @@ import {
     setFogUniforms,
     setGroundUniforms
 } from "../core/shaderChunks.js";
+import {
+    SHADOW_UNIFORMS,
+    SHADOW_VERTEX_FN,
+    SHADOW_FRAGMENT_FN,
+    SHADOW_UNIFORM_NAMES,
+    ShadowPass
+} from "../core/Shadow.js";
 import { ROCKS } from "../config.js";
 import { ROCK1_MODEL } from "./Rock1.js";
 import { ROCK2_MODEL } from "./Rock2.js";
@@ -32,10 +39,13 @@ uniform float uSizeMax;
 ${CAMERA_UNIFORMS}
 uniform float uSeed;
 uniform float uAmp;
+${SHADOW_UNIFORMS}
 ${GROUND_GLSL}
+${SHADOW_VERTEX_FN}
 
 out vec3 vColor;
 out float vDepth;
+out float vAlpha;
 
 float rockHash(vec2 p) {
     return fract(sin(dot(p + uSeed + vec2(71.9, 13.7), vec2(311.7, 127.1))) * 26143.1337);
@@ -58,6 +68,16 @@ void main() {
     float dry = step(g.g, 0.05);               // keep rocks out of lakes
     float scale = sizeRand * typeMatch * dry;
 
+    if (uShadow > 0.5) {
+        vec3 sw = shadowWorld(wxz, aPos.xy, sizeRand * dry, vAlpha);
+        float d0;
+        gl_Position = projectWorld(sw, d0);
+        vDepth = d0;
+        vColor = vec3(0.0);
+        return;
+    }
+    vAlpha = 1.0;
+
     // Random yaw per cell so the repeated models never look identical.
     float ang = rockHash(id + 15.3) * 6.2831853;
     float ca = cos(ang), sa = sin(ang);
@@ -76,13 +96,20 @@ precision highp float;
 
 in vec3 vColor;
 in float vDepth;
+in float vAlpha;
+uniform float uShadow;
 ${FOG_UNIFORMS}
 
 ${FOG_FN}
+${SHADOW_FRAGMENT_FN}
 
 out vec4 frag;
 
 void main() {
+    if (uShadow > 0.5) {
+        frag = shadowFrag(vDepth, vAlpha);
+        return;
+    }
     frag = vec4(applyFog(vColor, vDepth), 1.0);
 }`;
 
@@ -141,7 +168,8 @@ export class Rocks {
             "uSeed", "uAmp", "uGround", "uGroundOrigin", "uGroundCell",
             "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
             "uScaleX", "uScaleY", "uNear", "uFar",
-            "uFog", "uFogStart", "uFogEnd"
+            "uFog", "uFogStart", "uFogEnd",
+            ...SHADOW_UNIFORM_NAMES
         ]);
         const aPos = gl.getAttribLocation(this.program, "aPos");
         const aColor = gl.getAttribLocation(this.program, "aColor");
@@ -155,6 +183,8 @@ export class Rocks {
         this._attrib(aType, new Float32Array(type), 1, 0);
         this.picker.bind(gl, aCell);
         gl.bindVertexArray(null);
+
+        this.shadow = new ShadowPass(gl, this.picker, aPos, aCell, ROCKS.shadow);
     }
 
     _attrib(location, data, size, divisor) {
@@ -191,6 +221,7 @@ export class Rocks {
 
         gl.bindVertexArray(this.vao);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, this.vertexCount, this.picker.count);
+        this.shadow.render(gl, this.u, this.picker.count);
         gl.bindVertexArray(null);
     }
 }
