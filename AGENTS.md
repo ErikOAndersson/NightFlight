@@ -42,12 +42,12 @@ over procedural terrain, rendered to an HTML5 canvas with vanilla ES modules
   `Shadow` (shared fake-shadow GLSL + `ShadowPass`).
 - `src/world/` — `Noise` (seed holder only), `Sky`, `Terrain`.
 - `src/entities/` — `Moon`, `Water`, `Trees`, `Rocks`, `Houses`, `Bird`.
-  `Bird` imports its mesh from `Bird2.js`; `Rocks` imports two meshes from
-  `Rock1.js` and `Rock2.js`; `Houses` imports `House3.js` (each a plain
+  `Bird` imports its mesh from `Bird3.js`; `Rocks` imports two meshes from
+  `Rock1.js` and `Rock2.js`; `Houses` imports `House4.js` (each a plain
   `export const` of `{ vertices, faces, edges }` converted from an `.obj`).
 - `obj2js.py` (project root) converts `.obj` → `.js`. Its output lacks
   `export` and writes placeholder `faceColorOverrides` from the `.mtl`; fix
-  both by hand (see `House3.js`). Re-running it overwrites those fixes.
+  both by hand (see `House4.js`). Re-running it overwrites those fixes.
 
 Draw order each frame (in `Scene.render`): clear → terrain (re-bakes the ground
 lookup first when needed) → water → trees → rocks → houses → bird → sky → moon.
@@ -99,9 +99,12 @@ tested so terrain hides it.
 - **Sky** is a cylindrical panorama (`Assets/wide_sky.webp`, 4096x1024, horizon
   at the bottom edge). `Sky`'s fullscreen fragment shader inverts the shared
   projection (`uScaleX/Y`, pitch, yaw) to rebuild each pixel's view ray, then
-  looks up azimuth/`tan(elevation)` (true cylinder; `SKY.coverage` sets the
-  horizontal angle one image copy covers). Both wraps are mirrored, which hides
-  the non-tiling left/right edges and the below-horizon smear. No mipmaps
+  looks up azimuth/`tanh(k·tan(elevation))` (a cylinder near the horizon,
+  eased so the image's top edge lands exactly at the zenith; `SKY.coverage`
+  sets the horizontal angle one image copy covers, `SKY.verticalScale` trades
+  low-sky stretch for upper-sky sharpness). Horizontally the wrap is mirrored,
+  which hides the non-tiling left/right edges; vertically it clamps (no
+  repeat or mirror), so below the horizon it holds the bottom row. No mipmaps
   (the `atan` seam would break derivative LOD). Uses texture unit 2. Because it
   is direction-only, it pans with camera yaw/pitch but not with flight.
 - **Ground detail** is world-space value noise (large patches + fine speckle)
@@ -137,12 +140,12 @@ manual (`←→↑↓`) + automatic pivots; controls (`R` regenerate, `G` wirefr
 animation clock; camera still eases), `1/2` hills, `3/4` height, `5/6` trees, `M` toggle the
 help overlay); instanced pines; a textured moon; a starfield + nebula sky;
 occasional lakes with a terrain-following shoreline; an imported low-poly bird
-(`Bird2.js`) that alternates between flapping and gliding on a random 10–20s
+(`Bird3.js`) that alternates between flapping and gliding on a random 10–20s
 timer; two imported, randomly-sized and -rotated rock models
-(`Rock1.js`/`Rock2.js`); rare houses (`House3.js`) with a lit window; and a
+(`Rock1.js`/`Rock2.js`); rare houses (`House4.js`, with a gray foundation that fills the drop on slopes) with a lit window; and a
 faceted moon reflection on the lakes; a panoramic sky image; subtle ground
 colour variation; and fake ground shadows under trees, rocks and houses.
 
-Natural extensions: clouds, birds flocking, snow on peaks. When swapping in new `.obj` models, follow the `Bird2.js`/`Rock1.js`
+Natural extensions: clouds, birds flocking, snow on peaks. When swapping in new `.obj` models, follow the `Bird3.js`/`Rock1.js`
 pattern (plain `export const` of `{ vertices, faces, edges }`, 0-based triangle
 indices) and bake orientation/size/shading in the entity's `_build()`.

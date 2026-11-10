@@ -25,6 +25,7 @@ uniform sampler2D uTex;
 uniform float uCoverage;
 uniform float uAspect;
 uniform float uHorizon;
+uniform float uVerticalScale;
 uniform float uHeading;
 uniform float uBrightness;
 ${CAMERA_UNIFORMS}
@@ -41,10 +42,13 @@ void main() {
     float dz = -rx * uYawSin + rz0 * uYawCos;
 
     float az = atan(dx, dz) + uHeading;
-    // True cylinder: height grows with tan(elevation); below the horizon the
-    // image mirrors instead of smearing its edge row.
-    float el = clamp(atan(abs(dy), length(vec2(dx, dz))), 0.0, 1.45);
-    vec2 uv = vec2(az / uCoverage, uHorizon + tan(el) * uAspect / uCoverage);
+    // Cylinder near the horizon (height grows with tan(elevation)), eased by
+    // tanh so the image's top edge lands at the zenith instead of repeating.
+    // Below the horizon it holds the bottom row (the dark mountain base).
+    float el = atan(max(dy, 0.0), length(vec2(dx, dz)));
+    float span = max(1.0 - uHorizon, 1e-3);
+    float k = uVerticalScale * uAspect / (uCoverage * span);
+    vec2 uv = vec2(az / uCoverage, uHorizon + span * tanh(k * tan(min(el, 1.5))));
     frag = vec4(texture(uTex, uv).rgb * uBrightness, 1.0);
 }`;
 
@@ -54,7 +58,7 @@ export class Sky {
         this.gl = gl;
         this.program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
         this.u = getUniforms(gl, this.program, [
-            "uTex", "uCoverage", "uAspect", "uHorizon", "uHeading", "uBrightness",
+            "uTex", "uCoverage", "uAspect", "uHorizon", "uVerticalScale", "uHeading", "uBrightness",
             "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
             "uScaleX", "uScaleY", "uNear", "uFar"
         ]);
@@ -93,9 +97,10 @@ export class Sky {
             // No mipmaps: the atan seam would break derivative-based LOD.
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            // Mirrored so the non-tiling left/right edges blend seamlessly.
+            // Mirrored so the non-tiling left/right edges blend seamlessly;
+            // vertically the image spans horizon to zenith exactly once.
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.MIRRORED_REPEAT);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.MIRRORED_REPEAT);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         };
         img.src = url;
         return tex;
@@ -108,6 +113,7 @@ export class Sky {
         gl.uniform1f(this.u.uCoverage, SKY.coverage);
         gl.uniform1f(this.u.uAspect, SKY.imageAspect);
         gl.uniform1f(this.u.uHorizon, SKY.horizon);
+        gl.uniform1f(this.u.uVerticalScale, SKY.verticalScale);
         gl.uniform1f(this.u.uHeading, SKY.heading);
         gl.uniform1f(this.u.uBrightness, SKY.brightness);
 

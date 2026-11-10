@@ -8,11 +8,11 @@ import {
     setFogUniforms
 } from "../core/shaderChunks.js";
 import { BIRD } from "../config.js";
-import { BIRD_MODEL } from "./Bird2.js";
+import { BIRD_MODEL } from "./Bird3.js";
 
 // Imported low-poly bird, uploaded once to the GPU, that flies a fixed distance
 // ahead of the camera so the camera reads as following it. The model is
-// reoriented into the scene axes (model X=body, Y=wingspan, Z=up) and flat-
+// reoriented into the scene axes (model X=body, Y=up, Z=wingspan) and flat-
 // shaded into vertex colors; wings flap via a per-vertex weight in the shader.
 const VERTEX_SRC = `#version 300 es
 precision highp float;
@@ -96,21 +96,33 @@ export class Bird {
         const gl = this.gl;
         const s = BIRD.scale;
 
-        // Remap model axes into the scene: model X=body, Y=wingspan, Z=up;
-        // scene wants forward=+z, up=+y, left/right=x, so (mx,my,mz) → (my,mz,mx).
-        let maxSpan = 0;
-        for (const [, my] of BIRD_MODEL.vertices) {
-            maxSpan = Math.max(maxSpan, Math.abs(my));
+        // Remap model axes into the scene: model X=body (head +X), Y=up, Z=wingspan;
+        // scene wants forward=+z, up=+y, left/right=x, so (mx,my,mz) → (-mz,my,mx),
+        // a rotation (not a mirror) so the outward winding survives.
+        const lo = [Infinity, Infinity, Infinity];
+        const hi = [-Infinity, -Infinity, -Infinity];
+        for (const v of BIRD_MODEL.vertices) {
+            for (let i = 0; i < 3; i++) {
+                lo[i] = Math.min(lo[i], v[i]);
+                hi[i] = Math.max(hi[i], v[i]);
+            }
         }
-        const world = BIRD_MODEL.vertices.map(([mx, my, mz]) => [my * s, mz * s, mx * s]);
+        // The model sits off-origin; center its bounds on the bird position.
+        const [cx, cy, cz] = [0, 1, 2].map((i) => (lo[i] + hi[i]) / 2);
+        const maxSpan = Math.max(hi[2] - cz, cz - lo[2]);
+        const world = BIRD_MODEL.vertices.map(([mx, my, mz]) =>
+            [-(mz - cz) * s, (my - cy) * s, (mx - cx) * s]);
         // Wing weight: tips (large |span|) flap most, the body centerline stays.
-        const flapOf = BIRD_MODEL.vertices.map(([, my]) => Math.pow(Math.abs(my) / maxSpan, 1.6));
+        const flapOf = BIRD_MODEL.vertices.map(([, , mz]) => Math.pow(Math.abs(mz - cz) / maxSpan, 1.6));
 
         const pos = [];
         const col = [];
         const flap = [];
 
-        for (const [a, b, c] of BIRD_MODEL.faces) {
+        // Fan-triangulate the few quads the export keeps.
+        const tris = BIRD_MODEL.faces.flatMap((f) =>
+            f.slice(1, -1).map((_, k) => [f[0], f[k + 1], f[k + 2]]));
+        for (const [a, b, c] of tris) {
             const p0 = world[a], p1 = world[b], p2 = world[c];
             const n = faceNormal(p0, p1, p2);
             const shade = AMBIENT + (1 - AMBIENT) * Math.max(0, dot(n, LIGHT_DIR));
