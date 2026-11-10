@@ -132,6 +132,12 @@ export const SKY = {
     // 1 = true cylinder proportions at the horizon but smeared stars up high;
     // lower stretches the low sky a little to keep the upper sky sharp.
     verticalScale: 0.8,
-    heading: 0,       // panorama rotation around the vertical axis (radians)
+    // How far below the horizon the image's bottom edge sits (radians). The sky
+    // only shows a few degrees below the horizon (past the terrain edge), so
+    // ~12° keeps the smeared bottom row out of view at every camera height.
+    drop: 12 * Math.PI / 180,
+    // Panorama rotation around the vertical axis (radians); offset so the
+    // mirror seam at heading 0 isn't dead ahead of the starting camera.
+    heading: 35 * Math.PI / 180,
     brightness: 1.0
 };
