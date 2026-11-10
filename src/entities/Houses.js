@@ -18,20 +18,21 @@ import {
     ShadowPass
 } from "../core/Shadow.js";
 import { HOUSES, WATER } from "../config.js";
-import { HOUSE3_MODEL } from "./House3.js";
+import { HOUSE4_MODEL } from "./House4.js";
 
 // Rare cottages scattered over the lowlands, GPU-instanced like the rocks.
-// Each picked cell hashes a jitter and a yaw; the house sits on the lowest
-// ground under its footprint so it sinks into slopes instead of floating.
+// Each picked cell hashes a jitter and a yaw; the walls sit on the highest
+// ground under the footprint and the foundation fills the drop on slopes.
 const VERTEX_SRC = `#version 300 es
 precision highp float;
 
-in vec3 aPos;          // local house vertex (centered, base at y=0)
+in vec3 aPos;          // local house vertex (centered, wall base at y=0)
 in vec3 aColor;
 in vec2 aCell;         // picked cell id (present cells only)
 uniform float uCell;
 uniform float uScale;
 uniform float uFootprint; // half-diagonal of the scaled footprint
+uniform float uFoundation; // scaled foundation depth below the walls
 ${CAMERA_UNIFORMS}
 uniform float uSeed;
 uniform float uAmp;
@@ -57,9 +58,12 @@ void main() {
 
     float f = uFootprint;
     vec2 g = groundAt(wxz);
-    float ground = min(g.r, min(
-        min(groundAt(wxz + vec2(f, f)).r, groundAt(wxz + vec2(-f, f)).r),
-        min(groundAt(wxz + vec2(f, -f)).r, groundAt(wxz + vec2(-f, -f)).r)));
+    float h1 = groundAt(wxz + vec2(f, f)).r, h2 = groundAt(wxz + vec2(-f, f)).r;
+    float h3 = groundAt(wxz + vec2(f, -f)).r, h4 = groundAt(wxz + vec2(-f, -f)).r;
+    float ground = min(g.r, min(min(h1, h2), min(h3, h4)));
+    float high = max(g.r, max(max(h1, h2), max(h3, h4)));
+    // Walls clear the uphill side, but never so high the foundation floats.
+    float base = min(high, ground + uFoundation);
 
     float lowland = step(g.r, uAmp * 0.5);
     float dry = step(g.g, 0.01) * step(${WATER.level.toFixed(1)}, ground);
@@ -79,7 +83,7 @@ void main() {
     float ca = cos(ang), sa = sin(ang);
     vec3 s = aPos * scale;
     vec3 local = vec3(s.x * ca - s.z * sa, s.y, s.x * sa + s.z * ca);
-    vec3 world = vec3(wxz.x + local.x, ground + local.y, wxz.y + local.z);
+    vec3 world = vec3(wxz.x + local.x, base + local.y, wxz.y + local.z);
 
     float depth;
     gl_Position = projectWorld(world, depth);
@@ -120,11 +124,12 @@ export class Houses {
 
     _build() {
         const gl = this.gl;
-        const model = HOUSE3_MODEL;
+        const model = HOUSE4_MODEL;
         const pos = [];
         const col = [];
 
-        // The model is already Y-up: center it on x/z and drop the base to y=0.
+        // The model is already Y-up with the wall base at y=0 and the foundation
+        // below it; center it on x/z and keep that base as the ground line.
         let minX = Infinity, maxX = -Infinity, minY = Infinity;
         let minZ = Infinity, maxZ = -Infinity;
         for (const [x, y, z] of model.vertices) {
@@ -133,12 +138,16 @@ export class Houses {
             minY = Math.min(minY, y);
         }
         const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
-        const local = model.vertices.map(([x, y, z]) => [x - cx, y - minY, z - cz]);
+        const local = model.vertices.map(([x, y, z]) => [x - cx, y, z - cz]);
         this.footprint = Math.hypot(maxX - minX, maxZ - minZ) / 2 * HOUSES.scale;
+        this.foundation = Math.max(0, -minY) * HOUSES.scale;
 
         // Flat-shade each face into vertex colors; the lit window stays unshaded.
+        // Quads are fan-triangulated, keeping their face index for the colour.
         const overrides = model.faceColorOverrides || {};
-        model.faces.forEach(([a, b, c], i) => {
+        const tris = model.faces.flatMap((f, i) =>
+            f.slice(1, -1).map((_, k) => [f[0], f[k + 1], f[k + 2], i]));
+        tris.forEach(([a, b, c, i]) => {
             const p0 = local[a], p1 = local[b], p2 = local[c];
             const base = overrides[i] ? overrides[i].map((v) => v / 255) : HOUSES.wallColor;
             const glow = overrides[i] && overrides[i].join() === WINDOW_RGB.join();
@@ -155,7 +164,7 @@ export class Houses {
 
         this.program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
         this.u = getUniforms(gl, this.program, [
-            "uCell", "uScale", "uFootprint",
+            "uCell", "uScale", "uFootprint", "uFoundation",
             "uSeed", "uAmp", "uGround", "uGroundOrigin", "uGroundCell",
             "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
             "uScaleX", "uScaleY", "uNear", "uFar",
@@ -205,6 +214,7 @@ export class Houses {
         gl.uniform1f(this.u.uCell, cell);
         gl.uniform1f(this.u.uScale, HOUSES.scale);
         gl.uniform1f(this.u.uFootprint, this.footprint);
+        gl.uniform1f(this.u.uFoundation, this.foundation);
 
         gl.bindVertexArray(this.vao);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, this.vertexCount, this.picker.count);

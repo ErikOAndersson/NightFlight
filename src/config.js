@@ -54,6 +54,7 @@ export const TREES = {
 
     // Cheap fake shadow: a tapered strip on the ground pointing away from the moon.
     shadow: {
+        shape: "taper",  // outline: "taper" | "round" | "gable" (see core/Shadow.js)
         opacity: 0.4,    // darkest alpha, at the trunk (0 = off)
         length: 60,      // world units at tree scale 1
         width: 7,        // half-width at the trunk, world units at scale 1
@@ -68,7 +69,8 @@ export const ROCKS = {
     threshold: 0.92,     // presence cutoff (higher = fewer rocks)
     sizeMin: 0.6,        // smallest rock scale
     sizeMax: 1.8,        // largest rock scale
-    shadow: { opacity: 0.4, length: 14, width: 5, segments: 5, lift: 0.5 } // per size 1
+    // Rounded blob (half-oval) rather than the trees' taper; per size 1.
+    shadow: { shape: "round", opacity: 0.4, length: 14, width: 5, segments: 8, lift: 0.5 }
 };
 
 export const HOUSES = {
@@ -77,7 +79,9 @@ export const HOUSES = {
     threshold: 0.80,     // presence cutoff (higher = fewer houses)
     scale: 4,            // world units per model unit (model ~7.5 tall, ~12 wide)
     wallColor: [0.50, 0.09, 0.09], // faces without a material override
-    shadow: { opacity: 0.4, length: 80, width: 22, segments: 8, lift: 0.8 } // world units
+    // Box walls then a pointed roof gable; body = full-width fraction of the
+    // length (keep body * segments whole so the corner lands on a vertex).
+    shadow: { shape: "gable", body: 0.6, opacity: 0.4, length: 80, width: 22, segments: 10, lift: 0.8 }
 };
 
 export const BIRD = {
@@ -121,9 +125,13 @@ export const WATER = {
 export const SKY = {
     // Horizontal angle (radians) one copy of the image covers; smaller values
     // magnify the stars and reduce the squeezed "fisheye" look (mirrored beyond).
-    coverage: Math.PI/2,   // Math.PI
+    coverage: Math.PI,   // Math.PI
     imageAspect: 4,   // image width / height
     horizon: 0.0,     // image height fraction (0 = bottom edge) at the horizon
+    // The image's top edge always lands at the zenith (no vertical repeat).
+    // 1 = true cylinder proportions at the horizon but smeared stars up high;
+    // lower stretches the low sky a little to keep the upper sky sharp.
+    verticalScale: 0.8,
     heading: 0,       // panorama rotation around the vertical axis (radians)
     brightness: 1.0
 };
