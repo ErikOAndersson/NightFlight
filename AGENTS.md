@@ -104,7 +104,9 @@ tested so terrain hides it.
   sets the horizontal angle one image copy covers, `SKY.verticalScale` trades
   low-sky stretch for upper-sky sharpness). Horizontally the wrap is mirrored,
   which hides the non-tiling left/right edges; vertically it clamps (no
-  repeat or mirror), so below the horizon it holds the bottom row. No mipmaps
+  repeat or mirror). The image's bottom edge sits `SKY.drop` below the
+  horizon, behind the terrain edge, so the clamped bottom row's streaks never
+  show (the sky is only visible a few degrees below the horizon). No mipmaps
   (the `atan` seam would break derivative LOD). Uses texture unit 2. Because it
   is direction-only, it pans with camera yaw/pitch but not with flight.
 - **Ground detail** is world-space value noise (large patches + fine speckle)

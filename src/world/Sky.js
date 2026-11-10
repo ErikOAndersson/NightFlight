@@ -26,6 +26,7 @@ uniform float uCoverage;
 uniform float uAspect;
 uniform float uHorizon;
 uniform float uVerticalScale;
+uniform float uDrop;
 uniform float uHeading;
 uniform float uBrightness;
 ${CAMERA_UNIFORMS}
@@ -42,10 +43,12 @@ void main() {
     float dz = -rx * uYawSin + rz0 * uYawCos;
 
     float az = atan(dx, dz) + uHeading;
-    // Cylinder near the horizon (height grows with tan(elevation)), eased by
+    // Cylinder near the bottom edge (height grows with tan(elevation)), eased by
     // tanh so the image's top edge lands at the zenith instead of repeating.
-    // Below the horizon it holds the bottom row (the dark mountain base).
-    float el = atan(max(dy, 0.0), length(vec2(dx, dz)));
+    // The bottom edge sits uDrop below the horizon, behind the terrain, so the
+    // clamped bottom row's streaks stay hidden.
+    float el = atan(dy, length(vec2(dx, dz)));
+    el = max(0.0, (el + uDrop) * 1.5707963 / (1.5707963 + uDrop));
     float span = max(1.0 - uHorizon, 1e-3);
     float k = uVerticalScale * uAspect / (uCoverage * span);
     vec2 uv = vec2(az / uCoverage, uHorizon + span * tanh(k * tan(min(el, 1.5))));
@@ -58,7 +61,7 @@ export class Sky {
         this.gl = gl;
         this.program = createProgram(gl, VERTEX_SRC, FRAGMENT_SRC);
         this.u = getUniforms(gl, this.program, [
-            "uTex", "uCoverage", "uAspect", "uHorizon", "uVerticalScale", "uHeading", "uBrightness",
+            "uTex", "uCoverage", "uAspect", "uHorizon", "uVerticalScale", "uDrop", "uHeading", "uBrightness",
             "uCam", "uCos", "uSin", "uYawCos", "uYawSin",
             "uScaleX", "uScaleY", "uNear", "uFar"
         ]);
@@ -114,6 +117,7 @@ export class Sky {
         gl.uniform1f(this.u.uAspect, SKY.imageAspect);
         gl.uniform1f(this.u.uHorizon, SKY.horizon);
         gl.uniform1f(this.u.uVerticalScale, SKY.verticalScale);
+        gl.uniform1f(this.u.uDrop, SKY.drop);
         gl.uniform1f(this.u.uHeading, SKY.heading);
         gl.uniform1f(this.u.uBrightness, SKY.brightness);
 
